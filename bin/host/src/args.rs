@@ -27,32 +27,36 @@ pub struct KailuaHostArgs {
 
     /// Address of OP-NODE endpoint to use
     #[clap(long, env)]
-    pub op_node_address: Option<String>,
+    pub op_node_address: Option<String>,///存储 OP-NODE 端点的地址
     /// How many threads to use for fetching preflight data
     #[clap(long, env, default_value_t = 4)]
     pub num_concurrent_preflights: u64,
     /// How many threads to use for computing proofs
     #[clap(long, env, default_value_t = 1)]
-    pub num_concurrent_proofs: u64,
+    pub num_concurrent_proofs: u64,///存储计算证明时使用的线程数
 
     #[clap(flatten)]
     pub proving: ProvingArgs,
     #[clap(long, env, default_value_t = false)]
-    pub bypass_chain_registry: bool,
+    pub bypass_chain_registry: bool,///一个布尔值，用于指示是否绕过链注册表。
 
     #[clap(long, env, value_delimiter = ',')]
+    ///precondition_params[0], 全局起始区块号（L2链的共识起点）
+    ///precondition_params[1], 提案输出总数（预期验证的区块数量）
+    /// precondition_params[2], 输出间隔（验证检查点的区块间隔）
     pub precondition_params: Vec<u64>,
     #[clap(long, env, value_parser = parse_b256, value_delimiter = ',')]
+    ///l2提案被打包的l1的块的block hash
     pub precondition_block_hashes: Vec<B256>,
     #[clap(long, env, value_parser = parse_b256, value_delimiter = ',')]
+    /// l2提案对应的交易，作为l1的一笔交易，其blob的hash，blob可能保存着中间区块的执行trace
     pub precondition_blob_hashes: Vec<B256>,
-
     #[clap(flatten)]
-    pub telemetry: TelemetryArgs,
+    pub telemetry: TelemetryArgs,///包含与遥测相关的参数，TelemetryArgs 结构体应该定义了这些参数。
 
     /// Verbosity level (0-2)
     #[arg(long, short, action = ArgAction::Count)]
-    pub v: u8,
+    pub v: u8,///用于指定日志的详细程度，范围是 0 到 2。
 }
 
 impl PartialEq<Self> for KailuaHostArgs {

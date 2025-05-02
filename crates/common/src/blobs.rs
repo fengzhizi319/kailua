@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::client::log;
-use crate::rkyv::{BlobDef, Bytes48Def};
+use crate::rkyv::kzg::{BlobDef, Bytes48Def};
 use alloy_eips::eip4844::{
     kzg_to_versioned_hash, Blob, IndexedBlobHash, BLS_MODULUS, FIELD_ELEMENTS_PER_BLOB,
 };
@@ -26,6 +26,16 @@ use kona_derive::traits::BlobProvider;
 use kona_protocol::BlockInfo;
 use serde::{Deserialize, Serialize};
 
+/*
+// 每个 BlobFetchRequest 包含：
+BlobFetchRequest {
+    block_ref: BlockInfo,  // L1 区块头信息（包含区块哈希、高度等）
+    blob_hash: IndexedBlobHash { // Blob 在区块中的定位信息
+        index: u64,       // 在区块交易中的索引位置
+        hash: B256        // Blob 数据的密码学哈希
+    }
+}
+ */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlobFetchRequest {
     pub block_ref: BlockInfo,
@@ -56,13 +66,13 @@ impl From<BlobWitnessData> for PreloadedBlobProvider {
             .into_iter()
             .map(|b| c_kzg::Blob::new(b.0))
             .collect::<Vec<_>>();
-        c_kzg::KzgProof::verify_blob_kzg_proof_batch(
-            blobs.as_slice(),
-            value.commitments.as_slice(),
-            value.proofs.as_slice(),
-            ethereum_kzg_settings(),
-        )
-        .expect("Failed to batch validate kzg proofs");
+        ethereum_kzg_settings(0)
+            .verify_blob_kzg_proof_batch(
+                blobs.as_slice(),
+                value.commitments.as_slice(),
+                value.proofs.as_slice(),
+            )
+            .expect("Failed to batch validate kzg proofs");
         let hashes = value
             .commitments
             .iter()

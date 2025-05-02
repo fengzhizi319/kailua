@@ -31,7 +31,9 @@ pub fn needs_validation(key_type: &PreimageKeyType) -> bool {
 pub fn validate_preimage(key: &PreimageKey, value: &[u8]) -> PreimageOracleResult<()> {
     let key_type = key.key_type();
     let image = match key_type {
+        // Keccak256 哈希验证
         PreimageKeyType::Keccak256 => Some(keccak256(value).0),
+        // RISC0 SHA-256 验证（适配zkVM）
         PreimageKeyType::Sha256 => {
             let x = SHA2::hash_bytes(value);
             Some(x.as_bytes().try_into().unwrap())

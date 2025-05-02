@@ -154,20 +154,21 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_oneshot_task(
-    args: KailuaHostArgs,
-    rollup_config: RollupConfig,
-    disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_hash: B256,
-    precondition_validation_data_hash: B256,
-    stitched_executions: Vec<Vec<Execution>>,
-    stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
-    prove_snark: bool,
-    force_attempt: bool,
-    seek_proof: bool,
-    task_sender: Sender<Oneshot>,
+    args: KailuaHostArgs,                      // 宿主程序配置参数（包含L2节点地址、证明参数等）
+    rollup_config: RollupConfig,              // Rollup链配置（包含链ID、合约地址等）
+    disk_kv_store: Option<RWLKeyValueStore>,  // 磁盘键值存储（用于缓存证明中间数据）
+    precondition_hash: B256,                  // 预处理数据哈希（保证数据完整性）
+    precondition_validation_data_hash: B256,  // 预处理验证数据哈希（L1上的存储证明）
+    stitched_executions: Vec<Vec<Execution>>, // 已拼接的区块执行轨迹集合
+    stitched_boot_info: Vec<StitchedBootInfo>,// 多个子证明的启动信息集合
+    stitched_proofs: Vec<Receipt>,            // 已生成的子证明集合
+    prove_snark: bool,                       // SNARK证明生成开关（true启用高压缩证明）
+    force_attempt: bool,                      // 强制证明尝试标志（跳过安全检查）
+    seek_proof: bool,                         // 查找现有证明标志（优先使用缓存）
+    task_sender: Sender<Oneshot>,             // 异步任务发送通道（用于工作线程池）
 ) -> Result<Receipt, ProvingError> {
     // create proving task
+    // 创建缓存任务实例（封装所有证明参数）
     let cached_task = Cached {
         args,
         rollup_config,
@@ -182,20 +183,23 @@ pub async fn compute_oneshot_task(
         seek_proof,
     };
     // create onshot channel
+    // 创建单次任务通信通道（容量1保证同步）
     let oneshot_channel = async_channel::bounded(1);
     // dispatch task to pool
+    // 将任务发送到工作池（通过MPSC通道）
     task_sender
         .send(Oneshot {
-            cached_task,
-            result_sender: oneshot_channel.0,
+            cached_task,                      // 包含完整证明参数的任务包
+            result_sender: oneshot_channel.0,// 结果回传通道发送端
         })
         .await
         .expect("Oneshot channel closed");
     // wait for result
+    // 等待并返回证明结果（异步阻塞）
     oneshot_channel
         .1
         .recv()
         .await
         .expect("oneshot_channel should never panic")
-        .result
+        .result                               // 提取最终证明结果
 }

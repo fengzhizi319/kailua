@@ -14,7 +14,9 @@
 
 use crate::client::log;
 use crate::config::safe_default;
-use crate::rkyv::{B256Def, ExecutionArtifactsRkyv, OpPayloadAttributesRkyv};
+use crate::rkyv::optimism::OpPayloadAttributesRkyv;
+use crate::rkyv::primitives::B256Def;
+use crate::rkyv::BlockBuildingOutcomeRkyv;
 use alloy_consensus::Header;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_eips::Encodable2718;
@@ -22,7 +24,7 @@ use alloy_primitives::{Bytes, Sealed, B256, B64};
 use anyhow::Context;
 use async_trait::async_trait;
 use kona_driver::{Executor, PipelineCursor, TipCursor};
-use kona_executor::ExecutionArtifacts;
+use kona_executor::BlockBuildingOutcome;
 use kona_genesis::RollupConfig;
 use kona_mpt::ordered_trie_with_encoder;
 use kona_preimage::CommsClient;
@@ -37,18 +39,30 @@ use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Execution {
     /// Output root prior to execution
+        /// 执行前的共识状态根（L2链的初始状态）
+    /// - 类型: 256位哈希值 (B256)
+    /// - 来源: 前序区块执行后的状态树根
+    /// - 用途: 用于验证状态转换的正确性
     #[rkyv(with = B256Def)]
     pub agreed_output: B256,
     /// Derived attributes to be executed
+    /// 待执行的交易属性集合
+    /// - 包含: 时间戳、手续费接收地址、交易列表等
+    /// - 来源: 从L1链的Batch数据解析得到
+    /// - 序列化: 使用OpPayloadAttributesRkyv自定义格式
     #[rkyv(with = OpPayloadAttributesRkyv)]
     pub attributes: OpPayloadAttributes,
     /// Output block from execution
-    #[rkyv(with = ExecutionArtifactsRkyv)]
-    pub artifacts: ExecutionArtifacts,
+    #[rkyv(with = BlockBuildingOutcomeRkyv)]
+    pub artifacts: BlockBuildingOutcome,
     /// Output root after execution
+        /// 执行后的主张状态根（L2链的最终状态）
+    /// - 计算: 基于artifacts中的执行结果生成
+    /// - 用途: 作为下一个区块的agreed_output输入
+    /// - 验证: 需与零知识证明的输出结果一致
     #[rkyv(with = B256Def)]
     pub claimed_output: B256,
 }
@@ -72,10 +86,11 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
         self.executor.update_safe_head(header);
     }
 
+///执行交易，并收集交易结果
     async fn execute_payload(
         &mut self,
         attributes: OpPayloadAttributes,
-    ) -> Result<ExecutionArtifacts, Self::Error> {
+    ) -> Result<BlockBuildingOutcome, Self::Error> {
         let agreed_output = self.compute_output_root()?;
         if self
             .cache
@@ -84,13 +99,14 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
             .unwrap_or(Ok(false))?
         {
             let artifacts = self.cache.pop().unwrap().artifacts.clone();
-            log(&format!("CACHE {}", artifacts.block_header.number));
-            self.update_safe_head(artifacts.block_header.clone());
+            log(&format!("CACHE {}", artifacts.header.number));
+            self.update_safe_head(artifacts.header.clone());
             return Ok(artifacts);
         }
         if let Some(collection_target) = &self.collection_target {
             let artifacts = self.executor.execute_payload(attributes.clone()).await?;
             let mut collection_target = collection_target.lock().unwrap();
+	    // 当执行成功后会自动收集到 collection_target
             collection_target.push(Execution {
                 agreed_output,
                 attributes,
@@ -213,26 +229,31 @@ pub fn transactions_hash(transactions: &Vec<Bytes>) -> B256 {
 }
 
 pub fn exec_precondition_hash(executions: &[Arc<Execution>]) -> B256 {
+    // 步骤1：拼接所有执行记录的密码学要素
     let hashed_bytes = executions
         .iter()
         .map(|e| {
+            // 每个执行记录包含四个验证要素：
             [
-                e.agreed_output.0,
-                attributes_hash(&e.attributes)
-                    .expect("Unhashable attributes.")
+                e.agreed_output.0,  // 执行前状态根（初始状态承诺）
+                attributes_hash(&e.attributes) // 执行参数哈希（交易/手续费等）
+                    .expect("Unhashable attributes.") // 断言哈希计算成功
                     .0,
-                e.artifacts.block_header.hash().0,
-                e.claimed_output.0,
+                e.artifacts.header.hash().0, // 区块头哈希（执行过程完整性）
+                e.claimed_output.0, // 执行后状态根（最终状态承诺）
             ]
-            .concat()
+            .concat() // 将四个要素拼接为连续字节流
         })
-        .collect::<Vec<_>>()
-        .concat();
+        .collect::<Vec<_>>() // 收集所有执行记录的字节流
+        .concat(); // 将所有记录拼接为单个字节数组
+
+    // 步骤2：计算SHA-256哈希（使用RISC Zero的zkVM兼容实现）
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
         .as_bytes()
         .try_into()
-        .unwrap();
-    digest.into()
+        .unwrap(); // 哈希结果转换为固定长度数组
+
+    digest.into() // 转换为B256类型返回
 }
 
 /// Computes the receipts root from the given set of receipts.

@@ -85,53 +85,64 @@ pub struct KailuaProveInfo {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_proving_client<P, H>(
     proving: ProvingArgs,
-    oracle_client: P,
-    hint_client: H,
-    precondition_validation_data_hash: B256,
-    stitched_executions: Vec<Vec<Execution>>,
+    oracle_client: P,// 预映像数据源客户端（如区块链节点连接器）
+    hint_client: H,// 提示信息写入器（用于调试/优化日志）
+    precondition_validation_data_hash: B256,// 验证数据哈希（确保执行前状态正确）
+    stitched_executions: Vec<Vec<Execution>>,// 待证明的执行轨迹集合（二维结构支持分片）
     stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
-    prove_snark: bool,
-    force_attempt: bool,
-    seek_proof: bool,
+    stitched_proofs: Vec<Receipt>,// 预生成的子证明集合（用于证明缝合）
+    prove_snark: bool,// SNARK证明生成开关（true生成压缩证明）
+    force_attempt: bool,// 强制尝试模式（忽略资源限制）
+    seek_proof: bool,// 实际执行证明生成开关
 ) -> Result<(), ProvingError>
 where
     P: PreimageOracleClient + Send + Sync + Debug + Clone + 'static,
     H: HintWriterClient + Send + Sync + Debug + Clone + 'static,
 {
     // preload all data natively into a hashmap
+    // 阶段1：准备执行轨迹
     let (_, execution_cache) = split_executions(stitched_executions.clone());
     info!(
         "Running vec witgen client with {} cached executions ({} traces).",
         execution_cache.len(),
         stitched_executions.len()
     );
+    // 阶段2：生成见证数据（包含区块链状态转换的有效性证明所需的所有输入）
     let (_, mut witness_vec): (ProofJournal, Witness<VecOracle>) = {
-        // Instantiate oracles
+        // 2.1 初始化预映像服务
+        // 创建带缓存的预映像预言机（LRU缓存提升性能，降低重复请求开销）
         let preimage_oracle = Arc::new(CachingOracle::new(
-            ORACLE_LRU_SIZE,
-            oracle_client,
-            hint_client,
+            ORACLE_LRU_SIZE, // 缓存容量设置为1024个条目
+            oracle_client,    // 底层预映像客户端（如连接区块链节点的实现）
+            hint_client,      // 
         ));
+        
         let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
-        // Run witness generation with oracles
+
+        // 2.2 证明记录集，区块执行轨迹，boot信息
+        // 通过异步任务生成包含以下要素的见证数据：
+        // - 区块链状态预映像（Preimage）
+        // - 执行轨迹（Execution Trace）
+        // - 状态转换有效性证明
         witgen::run_witgen_client(
-            preimage_oracle,
-            10 * 1024 * 1024, // default to 10MB chunks
-            blob_provider,
-            proving.payout_recipient_address.unwrap_or_default(),
-            precondition_validation_data_hash,
-            execution_cache.clone(),
-            stitched_boot_info.clone(),
+            preimage_oracle,  // 共享预映像服务实例
+            10 * 1024 * 1024, // 数据分块大小（10MB），优化内存使用
+            blob_provider,    // 大块数据加载器
+            proving.payout_recipient_address.unwrap_or_default(), // 零地址表示无收益接收者
+            precondition_validation_data_hash, // 执行前状态验证哈希（确保数据一致性）
+            execution_cache.clone(), // 克隆执行轨迹缓存（避免所有权转移）
+            stitched_boot_info.clone(), // 克隆启动配置信息（L1/L2初始状态）
         )
-        .await
-        .expect("Failed to run vec witgen client.")
+            .await
+            .expect("Failed to run vec witgen client，原因可能是：1. 预映像数据不完整 2. 执行轨迹无效 3. 区块链状态不一致")
     };
+
 
     let execution_trace =
         core::mem::replace(&mut witness_vec.stitched_executions, stitched_executions);
 
     // check if we can prove this workload
+    // 阶段3：资源检查
     let (main_witness_size, witness_size) = sum_witness_size(&witness_vec);
     info!("Witness size: {witness_size} ({main_witness_size} main)");
     if witness_size > proving.max_witness_size {
@@ -150,19 +161,21 @@ where
         warn!("Continuing..");
     }
 
+    // 阶段4：证明生成控制
     if !seek_proof {
         return Err(ProvingError::SeekProofError(witness_size, execution_trace));
     }
 
+    // 阶段5：序列化见证数据
     let (preloaded_frames, streamed_frames) =
         encode_witness_frames(witness_vec).expect("Failed to encode VecOracle");
+    // 阶段6：执行证明生成
     seek_fpvm_proof(
         &proving,
         [preloaded_frames, streamed_frames].concat(),
         stitched_proofs,
         prove_snark,
-    )
-    .await
+    ).await
 }
 
 #[allow(clippy::type_complexity)]
@@ -217,18 +230,21 @@ pub async fn seek_fpvm_proof(
 ) -> Result<(), ProvingError> {
     // compute the zkvm proof
     let proof = if bonsai::should_use_bonsai() {
+        // 使用Bonsai云服务
         bonsai::run_bonsai_client(witness_frames, stitched_proofs, prove_snark).await?
     } else {
+        // 本地ZKVM直接生成
         zkvm::run_zkvm_client(
             witness_frames,
             stitched_proofs,
             prove_snark,
             proving.segment_limit,
         )
-        .await?
+            .await?
     };
 
     // Save proof file to disk
+    // 持久化存储证明文件
     save_proof_to_disk(&proof).await;
 
     Ok(())

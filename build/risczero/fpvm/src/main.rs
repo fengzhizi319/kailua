@@ -44,7 +44,21 @@ fn main() {
     }
 
     // Run client using witness
+    /*
+      pub struct ProofJournal {
+      pub payout_recipient: Address,
+      pub precondition_hash: B256,
+      pub l1_head: B256,
+      pub agreed_l2_output_root: B256,
+      pub claimed_l2_output_root: B256,
+      pub claimed_l2_block_number: u64,
+      pub config_hash: B256,
+      pub fpvm_image_id: B256,
+      pub transaction_root: u64, (方案1)
+      }
+       */
     let proof_journal = run_stateless_client(witness);
     // Write the final stitched journal
-    env::commit_slice(&proof_journal.encode_packed());
+    // 阶段4：提交最终证明日志
+    env::commit_slice(&proof_journal.encode_packed());  // 将证明写入zkVM输出
 }

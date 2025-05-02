@@ -71,28 +71,36 @@ pub async fn run_zkvm_client(
     Ok(prove_info.receipt)
 }
 
+///创建zkvm执行环境，把witness和Receipt注入到执行环境中
 pub fn build_zkvm_env<'a>(
     witness_frames: Vec<Vec<u8>>,
     stitched_proofs: Vec<Receipt>,
     segment_limit: u32,
 ) -> anyhow::Result<ExecutorEnv<'a>> {
     // Execution environment
+    // 创建基础执行环境构建器
     let mut builder = ExecutorEnv::builder();
     // Set segment po2
+    // 设置计算段大小限制（影响证明并行化和内存管理）
     builder.segment_limit_po2(segment_limit);
     // Pass in witness data
+    // 注入原始见证数据（每个frame对应一个输入通道）
     for frame in &witness_frames {
         builder.write_frame(frame);
     }
     // Dev-mode for recursive proofs
+    // 开发模式配置（启用快速算法和调试支持）
     if is_dev_mode() {
         builder.env_var("RISC0_DEV_MODE", "1");
     }
     // Pass in proofs
+    // 递归证明处理流水线
     for receipt in stitched_proofs {
         // Force in-guest verification (should be used for testing only)
+        // 强制递归验证模式（绕过正常验证流程，用于集成测试）
         if std::env::var("KAILUA_FORCE_RECURSION").is_ok() {
             warn!("(KAILUA_FORCE_RECURSION) Forcibly loading receipt as guest input.");
+            // Groth16 SNARK证明需要特殊处理（直接写入验证参数）
             builder.write(&receipt)?;
             continue;
         }
@@ -100,8 +108,10 @@ pub fn build_zkvm_env<'a>(
         if matches!(receipt.inner, InnerReceipt::Groth16(_)) {
             builder.write(&receipt)?;
         } else {
+            // 其他证明类型作为假设条件添加（后续需要实际验证）
             builder.add_assumption(receipt);
         }
     }
+    // 最终构建执行环境实例
     builder.build()
 }
