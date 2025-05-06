@@ -1412,11 +1412,11 @@ pub async fn handle_proof_requests(
     args: ValidateArgs,
     data_dir: PathBuf,
 ) -> anyhow::Result<()> {
-    // Telemetry
+    // 初始化OpenTelemetry追踪上下文
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("handle_proof_requests"));
 
-    // Fetch rollup configuration
+    // 从OP节点获取Rollup配置（包含L1/L2链ID等关键参数）
     let rollup_config = await_tel!(
         context,
         fetch_rollup_config(&args.core.op_node_url, &args.core.op_geth_url, None)
@@ -1425,7 +1425,8 @@ pub async fn handle_proof_requests(
     let l2_chain_id = rollup_config.l2_chain_id.to_string();
     let config_hash = B256::from(config_hash(&rollup_config)?);
     let fpvm_image_id = B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_ID));
-    // Set payout recipient
+
+    // 设置证明奖励接收地址（默认使用验证者钱包地址）
     let validator_wallet = await_tel_res!(
         context,
         tracer,
@@ -1438,9 +1439,10 @@ pub async fn handle_proof_requests(
         .unwrap_or_else(|| validator_wallet.default_signer().address());
     info!("Proof payout recipient: {payout_recipient}");
 
+    // 创建异步任务通道和工作线程池
     let task_channel: AsyncChannel<Task> = async_channel::unbounded();
     let mut proving_handlers = vec![];
-    // instantiate worker pool
+    // 根据配置的并发数初始化证明生成工作线程
     for _ in 0..args.num_concurrent_hosts {
         proving_handlers.push(spawn(handle_proving_tasks(
             args.kailua_host.clone(),
@@ -1449,9 +1451,9 @@ pub async fn handle_proof_requests(
         )));
     }
 
-    // Run proof generator loop
+    // 主消息处理循环：接收证明请求并分发任务
     loop {
-        // Dequeue messages
+        // 从通道接收证明请求消息（阻塞式）
         let Message::Proposal {
             index: proposal_index,
             precondition_validation_data,
@@ -1469,7 +1471,8 @@ pub async fn handle_proof_requests(
             bail!("Unexpected message type.");
         };
         info!("Processing proof for local index {proposal_index}.");
-        // Compute proof file name
+
+        // 构造证明日志（包含链状态指纹）
         let precondition_hash = precondition_validation_data
             .as_ref()
             .map(|d| d.precondition_hash())
@@ -1484,8 +1487,11 @@ pub async fn handle_proof_requests(
             config_hash,
             fpvm_image_id,
         };
+
+        // 生成唯一证明文件名（基于日志内容哈希）
         let proof_file_name = proof_file_name(&proof_journal);
-        // Prepare kailua-host proving args
+
+        // 准备kailua-host命令行参数（包含L2链ID、区块哈希等）
         let proving_args = create_proving_args(
             &args,
             data_dir.clone(),
@@ -1498,7 +1504,8 @@ pub async fn handle_proof_requests(
             claimed_l2_block_number,
             claimed_l2_output_root,
         );
-        // Send to task pool
+
+        // 将证明任务提交到工作池（异步执行）
         task_channel
             .0
             .send(Task {
@@ -1510,6 +1517,7 @@ pub async fn handle_proof_requests(
             .context("task channel closed")?;
     }
 }
+
 
 pub async fn handle_proving_tasks(
     kailua_host: PathBuf,
