@@ -409,7 +409,7 @@ impl Proposal {
         }
     }
 
-    pub async fn assess_correctness(
+        pub async fn assess_correctness(
         &mut self,
         config: &Config,
         op_node_provider: &OpNodeProvider,
@@ -419,45 +419,58 @@ impl Proposal {
         let context =
             opentelemetry::Context::current_with_span(tracer.start("Proposal::assess_correctness"));
 
-        // Update parent status
+        // 更新父提案的正确性状态
         self.correct_parent = Some(is_correct_parent);
-        // Check root claim correctness
+        
+        // 检查根声明正确性：查询链上实际输出根并比较
         let local_claim = await_tel_res!(
             context,
             tracer,
             "local_claim",
             retry_with_context!(op_node_provider.output_at_block(self.output_block_number))
         )?;
-
         self.correct_claim = Some(local_claim == self.output_root);
-        // Check intermediate output correctness for KailuaGame instances
+
+        // 仅当存在父提案时检查中间输出（非初始提案）
         if self.has_parent() {
+            // 计算中间输出对应的起始区块号
             let starting_block_number = self
                 .output_block_number
                 .saturating_sub(config.blocks_per_proposal());
+            
+            // 验证中间输出字段元素数量符合配置要求
             debug_assert_eq!(
                 self.io_field_elements.len() as u64,
                 config.proposal_output_count - 1
             );
-            // output commitments
+
+            // 遍历所有中间输出字段元素
             for (i, output_fe) in self.io_field_elements.iter().enumerate() {
+                // 计算当前中间输出对应的L2区块号
                 let io_number = starting_block_number + (i as u64 + 1) * config.output_block_span;
+                
+                // 获取链上实际输出哈希并转换为字段元素
                 let output_hash = await_tel_res!(
                     context,
                     tracer,
                     "output_hash",
                     retry_with_context!(op_node_provider.output_at_block(io_number))
                 )?;
+                
+                // 记录中间输出正确性（本地vs链上）
                 self.correct_io[i] = Some(&hash_to_fe(output_hash) == output_fe);
             }
-            // trail data
+
+            // 检查追踪数据字段元素是否全为零（合规性要求）
             for (i, output_fe) in self.trail_field_elements.iter().enumerate() {
                 self.correct_trail[i] = Some(output_fe.is_zero());
             }
         }
-        // Return correctness
+
+        // 返回最终正确性判定结果
         Ok(self.is_correct())
     }
+
 
     pub fn is_correct(&self) -> Option<bool> {
         // A proposal is false if it extends an incorrect parent proposal

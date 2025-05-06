@@ -103,17 +103,22 @@ impl KailuaDB {
         let context =
             opentelemetry::Context::current_with_span(tracer.start("KailuaDB::load_proposals"));
 
+        // 记录当前规范链头部索引作为基准
         let canonical_start = self.state.canonical_tip_index;
+        // 获取工厂合约中注册的游戏总数
         let game_count: u64 = dispute_game_factory
             .gameCount()
             .stall_with_context(context.clone(), "DisputeGameFactory::gameCount")
             .await
             .to();
+
         let mut proposals = Vec::new();
+        // 遍历所有未处理的工厂索引
         while self.state.next_factory_index < game_count {
+            // 尝试从本地数据库加载提案
             let proposal = match self.get_local_proposal(&self.state.next_factory_index) {
                 Some(proposal) => {
-                    // Skip cached proposals from other deployments
+                    // 跳过不属于当前Treasury部署的缓存提案
                     if proposal.treasury != self.treasury.address {
                         info!("Skipping cached proposal for different deployment.");
                         None
@@ -122,6 +127,7 @@ impl KailuaDB {
                     }
                 }
                 None => {
+                    // 从链上加载并处理新提案
                     match self
                         .load_game_at_index(
                             dispute_game_factory,
@@ -134,7 +140,9 @@ impl KailuaDB {
                     {
                         Ok(processed) => {
                             if processed {
+                                // 记录成功处理的新提案索引
                                 proposals.push(self.state.next_factory_index);
+                                // 从数据库获取刚处理的提案
                                 Some(
                                     self.get_local_proposal(&self.state.next_factory_index)
                                         .ok_or_else(|| {
@@ -146,6 +154,7 @@ impl KailuaDB {
                             }
                         }
                         Err(err) => {
+                            // 处理加载错误并终止循环
                             error!(
                                 "Error loading game at index {}: {err:?}",
                                 self.state.next_factory_index
@@ -156,23 +165,24 @@ impl KailuaDB {
                 }
             };
 
-            // Update state according to proposal
+            // 根据提案状态更新数据库状态
             if let Some(proposal) = proposal {
                 if let Some(true) = proposal.canonical {
-                    // Update canonical chain tip
+                    // 更新规范链头部索引
                     self.state.canonical_tip_index = Some(proposal.index);
                 } else if let Some(false) = proposal.is_correct() {
-                    // Update player eliminations
+                    // 记录被淘汰的提案者及其最早错误提案
                     if let Entry::Vacant(entry) = self.state.eliminations.entry(proposal.proposer) {
                         entry.insert(proposal.index);
                     }
                 }
             }
 
-            // Process next game index
+            // 推进到下一个工厂索引
             self.state.next_factory_index += 1;
         }
 
+        // 输出规范链更新日志
         if canonical_start != self.state.canonical_tip_index {
             info!(
                 "Updating canonical proposal chain tip to {:?}.",
@@ -182,6 +192,7 @@ impl KailuaDB {
 
         Ok(proposals)
     }
+
 
     pub async fn load_game_at_index<P: Provider<N>, N: Network>(
         &mut self,
@@ -209,25 +220,30 @@ impl KailuaDB {
             return Ok(false);
         }
         info!("Processing tournament {index} at {game_address}");
+        // 初始化KailuaTournament合约实例
         let tournament_instance =
             KailuaTournament::new(game_address, dispute_game_factory.provider());
+        // 从链上加载提案数据（包含blob数据）
         let mut proposal = Proposal::load(blob_provider, &tournament_instance)
             .with_context(context.clone())
             .await?;
 
         // Skip proposals unrelated to current run
+        // 检查提案是否属于当前Treasury部署
         if proposal.treasury != self.treasury.address {
             info!("Skipping proposal for different deployment.");
             return Ok(false);
         }
 
         // Determine inherited correctness
+        // 递归验证提案的正确性（包含父提案链的验证）
         self.determine_correctness(&mut proposal, op_node_provider)
             .with_context(context.clone())
             .await
             .context("Failed to determine proposal correctness")?;
 
         // Determine whether to follow or eliminate proposer
+        // 确定是否将提案标记为规范链候选
         if self.determine_if_canonical(&mut proposal).is_none() {
             bail!(
                 "Failed to determine if proposal {} is canonical (correctness: {:?}).",
@@ -237,11 +253,13 @@ impl KailuaDB {
         }
 
         // Determine tournament performance
+        // 检查提案是否符合锦标赛参与条件（时间顺序、未淘汰等）
         if self
             .determine_tournament_participation(&mut proposal)
             .context("Failed to determine tournament participation")?
         {
             // Insert proposal in db
+            // 将验证通过的提案持久化到本地数据库
             self.set_local_proposal(proposal.index, &proposal)?;
             Ok(true)
         } else {
@@ -264,12 +282,14 @@ impl KailuaDB {
         );
 
         // Accept correctness of treasury instance data
+        // 处理初始提案（treasury部署提案）的特殊情况
         if !proposal.has_parent() {
             info!("Accepting initial treasury proposal as true.");
-            return Ok(true);
+            return Ok(true);// 初始提案默认为正确
         }
 
         // Validate game instance data
+        // 获取父提案的正确性状态
         info!("Assessing proposal correctness..");
         let is_parent_correct = self
             .get_local_proposal(&proposal.parent)
@@ -278,7 +298,8 @@ impl KailuaDB {
                     .is_correct()
                     .expect("Attempted to process child before deciding parent correctness")
             })
-            .unwrap_or_default(); // missing parent means it's not part of the tournament
+            .unwrap_or_default(); // missing parent means it's not part of the tournament，父提案缺失表示该提案不属于当前tournament
+        // 评估当前提案的正确性（包含链上数据验证）
         let is_correct_proposal = match proposal
             .assess_correctness(&self.config, op_node_provider, is_parent_correct)
             .with_context(context.clone())
@@ -286,6 +307,7 @@ impl KailuaDB {
             .context("Proposal::assess_correctness")?
         {
             None => {
+                // 无法确定正确性（通常由于OP节点未同步到足够高度）
                 bail!("Failed to assess correctness. Is op-node synced far enough?");
             }
             Some(correct) => {

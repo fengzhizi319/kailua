@@ -169,7 +169,7 @@ pub async fn handle_proposals(
         context,
         fetch_rollup_config(&args.core.op_node_url, &args.core.op_geth_url, None)
     )
-    .context("fetch_rollup_config")?;
+        .context("fetch_rollup_config")?;
     let rollup_config_hash = config_hash(&config).expect("Configuration hash derivation error");
     info!("RollupConfigHash({})", hex::encode(rollup_config_hash));
 
@@ -238,7 +238,7 @@ pub async fn handle_proposals(
             kailua_game_implementation_address
         )
     )
-    .context("KailuaDB::init")?;
+        .context("KailuaDB::init")?;
     info!("KailuaTreasury({:?})", kailua_db.treasury.address);
     // Run the validator loop
     info!(
@@ -258,7 +258,7 @@ pub async fn handle_proposals(
             context,
             kailua_db.load_proposals(&dispute_game_factory, &op_node_provider, &cl_node_provider)
         )
-        .context("load_proposals")?;
+            .context("load_proposals")?;
 
         // Update sync telemetry
         if let Some(canonical_tip) = kailua_db.canonical_tip() {
@@ -329,7 +329,7 @@ pub async fn handle_proposals(
                 context,
                 parent.fetch_is_successor_validity_proven(&eth_rpc_provider)
             )
-            .context("is_validity_proven")?;
+                .context("is_validity_proven")?;
             if is_validity_proven {
                 info!(
                     "Validity proof settling all disputes in tournament {} already submitted",
@@ -752,7 +752,7 @@ pub async fn handle_proposals(
                     }
                     let expected_block_number = parent.output_block_number
                         + kailua_db.config.proposal_output_count
-                            * kailua_db.config.output_block_span;
+                        * kailua_db.config.output_block_span;
                     if proof_journal.claimed_l2_block_number != expected_block_number {
                         warn!(
                             "Proof block number {} does not match expected {expected_block_number}",
@@ -1280,33 +1280,34 @@ async fn request_fault_proof(
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("request_fault_proof"));
 
+    // 检查提案是否存在分歧点（仅错误提案需要生成故障证明）
     let Some(fault) = proposal.fault() else {
         error!("Proposal {} does not diverge from canon.", proposal.index);
         return Ok(());
     };
     let divergence_point = fault.divergence_point() as u64;
 
-    // Read additional data for Kona invocation
+    // 准备Kona证明生成器的输入数据
     info!(
         "Requesting fault proof for proposal {} at point {divergence_point}.",
         proposal.index
     );
 
-    // Set L2 Head Number: start from the last common transition
+    // 计算最后共同认可的L2区块高度（父提案输出 + 配置跨度 * 分歧位置）
     let agreed_l2_head_number =
         parent.output_block_number + config.output_block_span * divergence_point;
     debug!("l2_head_number {:?}", &agreed_l2_head_number);
 
-    // Get L2 head hash
+    // 获取L2共识区块哈希（用于生成证明的基准点）
     let agreed_l2_head_hash = await_tel!(
         context,
         get_block_by_number(&l2_node_provider, agreed_l2_head_number,)
     )?
-    .header()
-    .hash();
+        .header()
+        .hash();
     debug!("l2_head {:?}", &agreed_l2_head_hash);
 
-    // Get L2 head output root
+    // 获取L2共识输出根（用于验证链状态一致性）
     let agreed_l2_output_root = await_tel_res!(
         context,
         tracer,
@@ -1314,7 +1315,7 @@ async fn request_fault_proof(
         retry_with_context!(op_node_provider.output_at_block(agreed_l2_head_number))
     )?;
 
-    // Prepare expected output commitment: target the first bad transition
+    // 准备预期的错误输出承诺（目标为第一个错误转移）
     let claimed_l2_block_number = agreed_l2_head_number + config.output_block_span;
     let claimed_l2_output_root = await_tel_res!(
         context,
@@ -1323,24 +1324,25 @@ async fn request_fault_proof(
         retry_with_context!(op_node_provider.output_at_block(claimed_l2_block_number))
     )?;
 
-    // Set appropriate L1 head
+    // 设置与提案对应的L1链头（确保跨链状态一致性）
     let l1_head = proposal.l1_head;
 
-    // Message proving task
+    // 组装并发送证明请求消息到处理通道
     channel
         .sender
         .send(Message::Proposal {
             index: proposal.index,
-            precondition_validation_data: None,
+            precondition_validation_data: None,  // 故障证明无需预验证数据
             l1_head,
-            agreed_l2_head_hash,
-            agreed_l2_output_root,
-            claimed_l2_block_number,
-            claimed_l2_output_root,
+            agreed_l2_head_hash,     // 共识区块哈希
+            agreed_l2_output_root,   // 共识输出根
+            claimed_l2_block_number, // 声称的错误区块高度
+            claimed_l2_output_root,  // 声称的错误输出根
         })
         .await?;
     Ok(())
 }
+
 
 async fn request_validity_proof(
     channel: &mut DuplexChannel<Message>,
@@ -1388,8 +1390,8 @@ async fn request_validity_proof(
         context,
         get_block_by_number(&l2_node_provider, parent.output_block_number)
     )?
-    .header
-    .hash;
+        .header
+        .hash;
     debug!("l2_head {:?}", &agreed_l2_head_hash);
     // Message proving task
     channel
@@ -1412,20 +1414,21 @@ pub async fn handle_proof_requests(
     args: ValidateArgs,
     data_dir: PathBuf,
 ) -> anyhow::Result<()> {
-    // Telemetry
+    // 初始化OpenTelemetry追踪上下文
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("handle_proof_requests"));
 
-    // Fetch rollup configuration
+    // 从OP节点获取Rollup配置（包含L1/L2链ID等关键参数）
     let rollup_config = await_tel!(
         context,
         fetch_rollup_config(&args.core.op_node_url, &args.core.op_geth_url, None)
     )
-    .context("fetch_rollup_config")?;
+        .context("fetch_rollup_config")?;
     let l2_chain_id = rollup_config.l2_chain_id.to_string();
     let config_hash = B256::from(config_hash(&rollup_config)?);
     let fpvm_image_id = B256::from(bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_ID));
-    // Set payout recipient
+
+    // 设置证明奖励接收地址（默认使用验证者钱包地址）
     let validator_wallet = await_tel_res!(
         context,
         tracer,
@@ -1438,9 +1441,10 @@ pub async fn handle_proof_requests(
         .unwrap_or_else(|| validator_wallet.default_signer().address());
     info!("Proof payout recipient: {payout_recipient}");
 
+    // 创建异步任务通道和工作线程池
     let task_channel: AsyncChannel<Task> = async_channel::unbounded();
     let mut proving_handlers = vec![];
-    // instantiate worker pool
+    // 根据配置的并发数初始化证明生成工作线程
     for _ in 0..args.num_concurrent_hosts {
         proving_handlers.push(spawn(handle_proving_tasks(
             args.kailua_host.clone(),
@@ -1449,9 +1453,9 @@ pub async fn handle_proof_requests(
         )));
     }
 
-    // Run proof generator loop
+    // 主消息处理循环：接收证明请求并分发任务
     loop {
-        // Dequeue messages
+        // 从通道接收证明请求消息（阻塞式）
         let Message::Proposal {
             index: proposal_index,
             precondition_validation_data,
@@ -1469,7 +1473,8 @@ pub async fn handle_proof_requests(
             bail!("Unexpected message type.");
         };
         info!("Processing proof for local index {proposal_index}.");
-        // Compute proof file name
+
+        // 构造证明日志（包含链状态指纹）
         let precondition_hash = precondition_validation_data
             .as_ref()
             .map(|d| d.precondition_hash())
@@ -1484,8 +1489,11 @@ pub async fn handle_proof_requests(
             config_hash,
             fpvm_image_id,
         };
+
+        // 生成唯一证明文件名（基于日志内容哈希）
         let proof_file_name = proof_file_name(&proof_journal);
-        // Prepare kailua-host proving args
+
+        // 准备kailua-host命令行参数（包含L2链ID、区块哈希等）
         let proving_args = create_proving_args(
             &args,
             data_dir.clone(),
@@ -1498,7 +1506,8 @@ pub async fn handle_proof_requests(
             claimed_l2_block_number,
             claimed_l2_output_root,
         );
-        // Send to task pool
+
+        // 将证明任务提交到工作池（异步执行）
         task_channel
             .0
             .send(Task {
@@ -1510,6 +1519,7 @@ pub async fn handle_proof_requests(
             .context("task channel closed")?;
     }
 }
+
 
 pub async fn handle_proving_tasks(
     kailua_host: PathBuf,
