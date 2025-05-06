@@ -92,8 +92,7 @@ where
 
         //////////////////////// 纯执行模式处理，无需关注L1,EXECUTION CACHING     ////////////////////////
         if boot.l1_head.is_zero() { // 当L1头为空时进入纯执行模式
-            ////////////////////////////////////////////////////////////////
-        if boot.l1_head.is_zero() {
+
             log("EXECUTION ONLY");
             let cursor =
                 new_execution_cursor(rollup_config.as_ref(), safe_head.clone(), &mut l2_provider)
@@ -301,6 +300,7 @@ where
     Ok((boot, precondition_hash))
 }
 
+
 ///获取agreed_l2_output_root对应的L2 header的hash
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [BootInfo].
@@ -313,7 +313,7 @@ where
 {
     // 初始化128字节缓冲区（根据Kona协议规范，L2输出根预映像需要128字节）
     let mut output_preimage = [0u8; 128];
-    
+
     // 发送StartingL2Output类型的提示，通知预言机需要获取L2起始输出的预映像数据
     // 协议格式：HintType(1字节) + agreed_l2_output_root(32字节)
     HintType::StartingL2Output
