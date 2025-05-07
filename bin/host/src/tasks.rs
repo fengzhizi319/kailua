@@ -131,7 +131,8 @@ pub struct Oneshot {
 }
 
 pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::Result<()> {
-    loop {
+    loop {// 持续处理任务的无限循环
+        // 从通道接收证明任务（异步阻塞）
         let Oneshot {
             cached_task,
             result_sender,
@@ -140,14 +141,15 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
             .await
             .context("task receiver channel closed")?;
 
+        // 执行证明计算并发送结果
         if let Err(res) = result_sender
             .send(OneshotResult {
-                cached: cached_task.clone(),
-                result: cached_task.compute_cached().await,
+                cached: cached_task.clone(),// 克隆任务元数据
+                result: cached_task.compute_cached().await,// 执行核心计算
             })
             .await
         {
-            error!("failed to send task result: {res:?}");
+            error!("failed to send task result: {res:?}");// 错误处理
         }
     }
 }

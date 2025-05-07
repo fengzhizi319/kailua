@@ -153,6 +153,14 @@ async fn main() -> anyhow::Result<()> {
     // 创建证明结果通道
     let result_channel = async_channel::unbounded();
     let prover_channel = async_channel::unbounded();
+    /*
+    result_pq 是一个 BinaryHeap（优先队列），用于临时存储和排序各个子任务（区块区间）证明的结果（OneshotResult）。
+    其主要作用是：
+    1.收集并排序证明结果：每个子任务完成后，将其结果插入 result_pq，通过实现 Ord/PartialOrd，可以按区块号等关键字段自动排序。
+    2.保证最终拼接顺序：在所有子任务完成后，通过 into_sorted_vec() 方法将结果按顺序取出，确保后续拼接（stitch）证明时区块顺序正确。
+    3.支持任务拆分与并发：当任务因错误被拆分为多个子任务时，result_pq 能收集所有子任务的结果，最终统一处理。
+    简言之，result_pq 保证了多段区块证明结果的有序收集与后续正确拼接。
+     */
     let mut result_pq = BinaryHeap::new();
     let mut num_proofs = 1;
     prover_channel
