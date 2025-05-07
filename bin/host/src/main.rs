@@ -131,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
             "Running concurrent preflights with {} threads",
             args.num_concurrent_preflights
         );
+        //验证结果的正确性，将预处理数据(L1以及L2相关的数据)存储到 KV 存储中，没有生成证明
         concurrent_execution_preflight(
             &args,
             rollup_config.clone(),
@@ -163,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
      */
     let mut result_pq = BinaryHeap::new();
     let mut num_proofs = 1;
+    // 初始任务发送（未拆分），初始任务have_split标记为 false
     prover_channel
         .0
         .send((false, args.clone()))
@@ -214,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
                     precondition_validation_data_hash,
                     vec![],
                     vec![],
-                    !have_split,
+                    !have_split,//false取反为true
                     task_channel.0.clone(),
                 )
                     .await;
@@ -239,12 +241,15 @@ async fn main() -> anyhow::Result<()> {
 
         match result {
             Ok(proof) => {
+                // 检查证明结果是否存在
                 if let Some(proof) = proof {
+                    // 将证明结果封装为 OneshotResult 结构体，并压入优先队列 result_pq 中
                     result_pq.push(OneshotResult {
+                        // 缓存本次证明任务的相关参数，用于后续排序和可能的重新处理
                         cached: Cached {
-                            // used for sorting
+                            // 用于优先队列排序的任务参数
                             args: job_args,
-                            // all unused
+                            // 以下参数在当前逻辑中未使用，但保留供后续可能的扩展
                             rollup_config: rollup_config.clone(),
                             disk_kv_store: disk_kv_store.clone(),
                             precondition_hash,
@@ -252,13 +257,18 @@ async fn main() -> anyhow::Result<()> {
                             stitched_executions: vec![],
                             stitched_boot_info: vec![],
                             stitched_proofs: vec![],
+                            // 是否生成 SNARK 证明，当前设置为 false
                             prove_snark: false,
+                            // 强制尝试证明的标志
                             force_attempt,
+                            // 是否查找现有证明，当前设置为 true
                             seek_proof: true,
                         },
+                        // 封装证明结果，使用 Ok 表示证明成功
                         result: Ok(proof),
                     });
                 }
+
             }
             Err(err) => {
                 // Handle error case
@@ -345,7 +355,8 @@ async fn main() -> anyhow::Result<()> {
         let mut base_args = args;
         {
             // set last block as starting point
-            // 设置最后一个区块为起点
+            // 设置agreed_l2_output_root=claimed_l2_output_root，这样stitching_only就为true，就只会执行stitching
+            // 这是因为stitching_only为true时，不会执行任何区块的验证和计算，只进行拼接
             base_args.kona.agreed_l2_output_root = base_args.kona.claimed_l2_output_root;
             base_args.kona.agreed_l2_head_hash = l2_provider
                 .as_ref()
@@ -362,9 +373,14 @@ async fn main() -> anyhow::Result<()> {
         }
         // construct a list of boot info to backward stitch
         // 构造一个用于向后拼接的 boot 信息列表
+        // 从排序好的证明结果 proofs 中生成用于拼接的启动信息列表
         let stitched_boot_info = proofs
+            // 对 proofs 中的每个元素进行迭代
             .iter()
+            // 对迭代中的每个元素应用 StitchedBootInfo::from 方法，
+            // 这里假设 StitchedBootInfo 实现了 From 特质，能将 proofs 中的元素类型转换为 StitchedBootInfo 类型
             .map(StitchedBootInfo::from)
+            // 将转换后的元素收集到一个 Vec<StitchedBootInfo> 向量中
             .collect::<Vec<_>>();
 
         kailua_host::prove::compute_fpvm_proof(

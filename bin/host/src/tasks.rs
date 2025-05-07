@@ -155,6 +155,7 @@ pub async fn handle_oneshot_tasks(task_receiver: Receiver<Oneshot>) -> anyhow::R
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 计算单次证明任务的异步函数，不进行计算分拆
 pub async fn compute_oneshot_task(
     args: KailuaHostArgs,                      // 宿主程序配置参数（包含L2节点地址、证明参数等）
     rollup_config: RollupConfig,              // Rollup链配置（包含链ID、合约地址等）

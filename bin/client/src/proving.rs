@@ -91,16 +91,16 @@ pub async fn run_proving_client<P, H>(
     stitched_executions: Vec<Vec<Execution>>,// 待证明的执行轨迹集合（二维结构支持分片）
     stitched_boot_info: Vec<StitchedBootInfo>,
     stitched_proofs: Vec<Receipt>,// 预生成的子证明集合（用于证明缝合）
-    prove_snark: bool,// SNARK证明生成开关（true生成压缩证明）
+    prove_snark: bool,// SNARK证明生成开关，true表示groth16证明，false表示succinct证明
     force_attempt: bool,// 强制尝试模式（忽略资源限制）
-    seek_proof: bool,// 实际执行证明生成开关
+    seek_proof: bool,// 实际执行证明生成开关，true表示需要生成证明，false表示仅验证正确性，而不生成证明
 ) -> Result<(), ProvingError>
 where
     P: PreimageOracleClient + Send + Sync + Debug + Clone + 'static,
     H: HintWriterClient + Send + Sync + Debug + Clone + 'static,
 {
     // preload all data natively into a hashmap
-    // 阶段1：准备执行轨迹
+    // 阶段1：准备输入的已经存在的执行轨迹，可能为空
     let (_, execution_cache) = split_executions(stitched_executions.clone());
     info!(
         "Running vec witgen client with {} cached executions ({} traces).",
@@ -116,18 +116,15 @@ where
             oracle_client,    // 底层预映像客户端（如连接区块链节点的实现）
             hint_client,      // 
         ));
-        
+
         let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
 
         // 2.2 证明记录集，区块执行轨迹，boot信息
-        // 通过异步任务生成包含以下要素的见证数据：
-        // - 区块链状态预映像（Preimage）
-        // - 执行轨迹（Execution Trace）
-        // - 状态转换有效性证明
+        // 根据boot，blob，L1，L2数据等，生成完整的执行轨迹，验证boot数据的正确性，并返回witness。
         witgen::run_witgen_client(
             preimage_oracle,  // 共享预映像服务实例
             10 * 1024 * 1024, // 数据分块大小（10MB），优化内存使用
-            blob_provider,    // 大块数据加载器
+            blob_provider,    // blob数据加载器
             proving.payout_recipient_address.unwrap_or_default(), // 零地址表示无收益接收者
             precondition_validation_data_hash, // 执行前状态验证哈希（确保数据一致性）
             execution_cache.clone(), // 克隆执行轨迹缓存（避免所有权转移）
@@ -145,6 +142,7 @@ where
     // 阶段3：资源检查
     let (main_witness_size, witness_size) = sum_witness_size(&witness_vec);
     info!("Witness size: {witness_size} ({main_witness_size} main)");
+    // 当见证数据总大小超过安全阈值时触发
     if witness_size > proving.max_witness_size {
         warn!(
             "Witness size {} exceeds limit {}.",
@@ -182,46 +180,67 @@ where
 pub fn encode_witness_frames(
     witness_vec: Witness<VecOracle>,
 ) -> anyhow::Result<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+    // 序列化预加载数据分片
     // serialize preloaded shards
     let mut preloaded_data = witness_vec.oracle_witness.preimages.lock().unwrap();
-    let shards = shard_witness_data(&mut preloaded_data)?;
-    drop(preloaded_data);
+    let shards = shard_witness_data(&mut preloaded_data)?; // 将预加载数据分片序列化
+    drop(preloaded_data); // 及时释放锁避免死锁
+
+    // 序列化流式数据分片（逆序处理以适配后续消费顺序）
     // serialize streamed data
     let mut streamed_data = witness_vec.stream_witness.preimages.lock().unwrap();
     let mut streams = shard_witness_data(&mut streamed_data)?;
-    streams.reverse();
-    streamed_data.clear();
+    streams.reverse(); // 反转流式数据顺序以保持原始执行时序
+    streamed_data.clear(); // 清空原始数据避免内存泄漏
     drop(streamed_data);
+
+    // 序列化主见证对象（包含元数据和核心执行轨迹）
     // serialize main witness object
     let main_frame = rkyv::to_bytes::<rkyv::rancor::Error>(&witness_vec)
-        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-        .to_vec();
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))? // 转换序列化错误类型
+        .to_vec(); // 转换为字节向量
+
+    // 合并主帧与预加载分片数据
     let preloaded_data = [vec![main_frame], shards].concat();
 
-    Ok((preloaded_data, streams))
+    Ok((preloaded_data, streams)) // 返回预加载帧集合和流式帧集合
 }
 
+
+///将见证数据分片序列化
 pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<Vec<u8>>> {
     let mut shards = vec![];
+    // 遍历每个预映像数据条目
     for entry in data {
+        // 使用内存置换获取条目内容（原位置置为默认值，避免所有权问题）
         let shard = core::mem::take(entry);
+        // 序列化分片数据为二进制格式
         shards.push(
             rkyv::to_bytes::<rkyv::rancor::Error>(&shard)
+                // 转换序列化错误为统一错误类型
                 .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-                .to_vec(),
+                .to_vec(), // 将序列化结果转换为字节向量
         )
     }
+    // 返回序列化后的分片集合
     Ok(shards)
 }
 
+
 pub fn sum_witness_size(witness: &Witness<VecOracle>) -> (usize, usize) {
-    let (witness_frames, _) =
-        encode_witness_frames(witness.deep_clone()).expect("Failed to encode VecOracle");
-    (
-        witness_frames.first().map(|f| f.len()).unwrap(),
-        witness_frames.iter().map(|f| f.len()).sum::<usize>(),
-    )
+    // 将见证数据编码为分片帧
+    let (witness_frames, _) = encode_witness_frames(witness.deep_clone())
+        .expect("Failed to encode VecOracle");
+
+    // 计算主见证数据大小（第一个分片）
+    let main_size = witness_frames.first().map(|f| f.len()).unwrap();
+    // 计算总见证大小（所有分片之和）
+    let total_size = witness_frames.iter().map(|f| f.len()).sum();
+
+    (main_size, total_size)
 }
+
+///生成证明，并且把证明保存到磁盘上，文件名是根据证明的 journal 的 hash 生成的
 pub async fn seek_fpvm_proof(
     proving: &ProvingArgs,
     witness_frames: Vec<Vec<u8>>,

@@ -73,7 +73,7 @@ pub async fn start_server_and_native_client(
     seek_proof: bool,//查找现有证明文件模式
 ) -> Result<(), ProvingError> {
     // Instantiate data channels
-    // 创建双向通信通道（hint用于元数据传输，preimage用于镜像数据交换）
+    // 创建双向通信通道（hint用于发送数据请求，preimage用于处理数据请求）
     let hint = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     let preimage = BidirectionalChannel::new().map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
     // Create the server and start it.
@@ -84,7 +84,6 @@ pub async fn start_server_and_native_client(
     };
     let kv_store = create_key_value_store(&args.kona, disk_kv_store)
         .map_err(|e| ProvingError::OtherError(anyhow!(e)))?;
-    let server_task = start_server(&args.kona, kv_store, hint.host, preimage.host)
 
     // 启动预镜像服务器（异步任务）
     let server_task = start_server(

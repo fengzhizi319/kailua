@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use tracing::info;
 
 ///生成boot信息以及执行轨迹的Witness。
-/// 根据boot，blob，L1，L2数据等，生成完整的执行轨迹，并验证boot数据的正确性。
+/// 根据boot，blob，L1，L2数据等，生成完整的执行轨迹，验证boot数据的正确性，并返回witness。
 pub async fn run_witgen_client<P, B, O>(
     preimage_oracle: Arc<P>,         // 预映像数据源（boot，blob，L1，L2数据等）
     preimage_oracle_shard_size: usize, // 数据分片大小（优化内存使用）

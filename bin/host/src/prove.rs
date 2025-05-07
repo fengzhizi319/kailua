@@ -120,6 +120,7 @@ pub async fn compute_fpvm_proof(
             return Ok(Some(derivation_only_result?));
         };
         // abort if pure derivation may OOM
+        // 当见证数据总大小超过安全阈值时触发
         if witness_size > args.proving.max_witness_size {
             warn!(
                 "Derivation-only witness size {} exceeds limit {}.",
@@ -368,9 +369,9 @@ pub async fn compute_cached_proof(
     stitched_executions: Vec<Vec<Execution>>,// 拼接的区块执行数据
     stitched_boot_info: Vec<StitchedBootInfo>,// 拼接的启动信息
     stitched_proofs: Vec<Receipt>,//拼接的区块执行数据和证明
-    prove_snark: bool,// 是否生成SNARK证明，false
-    force_attempt: bool,// 强制尝试生成证明（即使可能失败），true
-    seek_proof: bool,// 是否查找现有证明，false
+    prove_snark: bool,// SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+    force_attempt: bool,// 强制尝试模式（忽略资源限制）
+    seek_proof: bool,// 实际执行证明生成开关，true表示需要生成证明，false表示仅验证正确性，而不生成证明
 ) -> Result<Receipt, ProvingError> {
     // extract single chain kona config
     // 构建 区块开始时的启动信息（包含L1/L2状态）
@@ -412,7 +413,7 @@ pub async fn compute_cached_proof(
             force_attempt, // 强制模式（忽略风险），true
             seek_proof, // 查找现有证明开关，false
         )
-            .await?; // 异步等待证明生成
+            .await?; // 异步等待证明生成，如果生成失败则返回错误
     }
 
     // 最终读取证明文件（统一入口）

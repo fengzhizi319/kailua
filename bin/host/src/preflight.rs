@@ -257,13 +257,13 @@ pub async fn concurrent_execution_preflight(
             vec![],                // 
             vec![],                // 
             vec![],                // 
+            false,                 // SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+            true,                  // 强制尝试模式，true表示忽略资源限制   
             false,                 // 证明生成开关
-            true,                  // 启用预检模式
-            false,                 // 是否查找现有证明
         )));
         // jobs.push(args.clone());
         // update starting block for next job
-	// 准备下一个任务的起始参数
+	    // 准备下一个任务的起始参数
         if num_blocks > 0 {
             // 获取新的起始区块哈希
             args.kona.agreed_l2_head_hash = l2_provider
