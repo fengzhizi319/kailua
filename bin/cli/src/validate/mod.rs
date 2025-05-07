@@ -93,26 +93,35 @@ pub struct ValidateArgs {
 }
 
 pub async fn validate(args: ValidateArgs, data_dir: PathBuf) -> anyhow::Result<()> {
+    // 初始化OpenTelemetry追踪器，用于监控和日志记录
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("validate"));
-
     // We run two concurrent tasks, one for the chain, and one for the prover.
     // Both tasks communicate using the duplex channel
+    // 创建双向通信通道（4096字节缓冲区），用于提案处理和证明请求间的数据交换
     let channel_pair = DuplexChannel::new_pair(4096);
 
+    // 启动并行任务：
+    // 1. 提案处理任务 - 监听链上事件，处理游戏提案
     let handle_proposals = spawn(
         handle_proposals(channel_pair.0, args.clone(), data_dir.clone())
-            .with_context(context.clone()),
+            .with_context(context.clone()), // 继承追踪上下文
     );
+
+    // 2. 证明请求处理任务 - 生成zk证明并提交到链上
     let handle_proof_requests =
         spawn(handle_proof_requests(channel_pair.1, args, data_dir).with_context(context.clone()));
 
+    // 使用try_join!同时等待两个任务的完成，确保任一失败时立即返回错误
     let (proposals_task, proofs_task) = try_join!(handle_proposals, handle_proof_requests)?;
+
+    // 将异步任务错误转换为带上下文的错误信息
     proposals_task.context("handle_proposals")?;
     proofs_task.context("handle_proofs")?;
 
     Ok(())
 }
+
 
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -1522,45 +1531,50 @@ pub async fn handle_proof_requests(
 
 
 pub async fn handle_proving_tasks(
-    kailua_host: PathBuf,
-    task_channel: AsyncChannel<Task>,
-    proof_sender: Sender<Message>,
+    kailua_host: PathBuf,       // kailua-host可执行文件路径
+    task_channel: AsyncChannel<Task>, // 异步任务接收通道
+    proof_sender: Sender<Message>,    // 证明结果发送通道
 ) -> anyhow::Result<()> {
+    // 初始化OpenTelemetry追踪器
     let tracer = tracer("kailua");
     let context = opentelemetry::Context::current_with_span(tracer.start("handle_proving_tasks"));
 
+    // 持续处理证明任务的主循环
     loop {
+        // 从任务通道接收证明请求（阻塞直到有任务）
         let Task {
-            proposal_index,
-            proving_args,
-            proof_file_name,
-        } = task_channel
-            .1
-            .recv()
-            .await
-            .context("task receiver channel closed")?;
+            proposal_index,      // 提案唯一标识
+            proving_args,        // 证明生成参数
+            proof_file_name,     // 证明文件存储路径
+        } = task_channel.1.recv().await.context("task receiver channel closed")?;
 
         // Prove via kailua-host (re dev mode/bonsai: env vars inherited!)
+        // 构建kailua-host命令行调用
         let mut kailua_host_command = Command::new(&kailua_host);
+        
+        // 开发模式特殊处理：允许生成测试用证明
         // get fake receipts when building under devnet
         if is_dev_mode() {
-            kailua_host_command.env("RISC0_DEV_MODE", "1");
+            kailua_host_command.env("RISC0_DEV_MODE", "1"); // 设置开发模式环境变量
         }
+        
+        // 设置证明生成参数（包含L2链ID、区块哈希等关键信息）
         // pass arguments to point at target block
         kailua_host_command.args(proving_args.clone());
-        debug!("kailua_host_command {:?}", &kailua_host_command);
+
+        // 异步执行证明生成命令
         // call the kailua-host binary to generate a proof
         match await_tel_res!(
             context,
             tracer,
             "KailuaHost",
             kailua_host_command
-                .kill_on_drop(true)
-                .spawn()
-                .context("Invoking kailua-host")?
-                .wait()
+                .kill_on_drop(true) // 进程超时自动终止
+                .spawn()?          // 启动子进程
+                .wait()            // 等待进程结束
         ) {
             Ok(proving_task) => {
+                // 处理执行结果状态码
                 if !proving_task.success() {
                     error!("Proving task failure. Exit code: {proving_task}");
                 } else {
@@ -1571,18 +1585,22 @@ pub async fn handle_proving_tasks(
                 error!("Failed to invoke kailua-host: {e:?}");
             }
         }
+
+        // 等待1秒确保证明文件写入完成
         // wait for io then read computed proof from disk
         sleep(Duration::from_secs(1)).await;
+        
+        // 读取生成的证明文件
         match read_proof_file(&proof_file_name).await {
             Ok(proof) => {
+                // 通过通道发送成功生成的证明
                 // Send proof via the channel
-                proof_sender
-                    .send(Message::Proof(proposal_index, proof))
-                    .await?;
+                proof_sender.send(Message::Proof(proposal_index, proof)).await?;
                 info!("Proof for local index {proposal_index} complete.");
             }
             Err(e) => {
                 error!("Failed to read proof file: {e:?}");
+                // 将失败任务重新加入队列进行重试
                 // retry proving task
                 task_channel
                     .0
@@ -1597,3 +1615,4 @@ pub async fn handle_proving_tasks(
         }
     }
 }
+
