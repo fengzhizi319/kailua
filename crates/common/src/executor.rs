@@ -36,56 +36,35 @@ use spin::RwLock;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-/// A structure representing the execution process and its results.
+/// Represents a block execution process and its results.
 ///
 /// This struct is designed to hold essential information about the execution,
 /// including its initial state, the attributes associated with the execution,
 /// the resulting artifacts, and the final state after execution.
-///
-/// # Fields
-///
-/// * `agreed_output`:
-///   - The output root before execution starts.
-///   - This value represents the agreed-upon initial state prior to processing.
-///   - Serialized/deserialized using `B256Def`.
-///
-/// * `attributes`:
-///   - The derived attributes that are to be used during the execution.
-///   - Contains additional metadata or instructions defining the execution.
-///   - Serialized/deserialized using `OpPayloadAttributesRkyv`.
-///
-/// * `artifacts`:
-///   - The resulting output block or artifacts generated during the execution process.
-///   - Describes the outcome of the execution process.
-///   - Serialized/deserialized using `BlockBuildingOutcomeRkyv`.
-///
-/// * `claimed_output`:
-///   - The final output root after execution completes.
-///   - Expected to match the state produced by processing the execution's attributes and artifacts.
-///   - Serialized/deserialized using `B256Def`.
-///
-/// # Derives
-///
-/// The struct derives the following traits:
-/// * `Clone`: Allows duplication of an instance of this struct.
-/// * `Debug`: Enables formatting the struct for debugging purposes.
-/// * `rkyv::Archive`: Facilitates archiving this struct for zero-copy deserialization.
-/// * `rkyv::Serialize`: Allows serialization of this struct for archival purposes.
-/// * `rkyv::Deserialize`: Permits deserialization from its archived form.
-///
-/// This struct is designed to interoperate with the `rkyv` crate, which provides efficient serialization and immutable archiving capabilities.
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Execution {
     /// Output root prior to execution
+        /// 执行前的共识状态根（L2链的初始状态）
+    /// - 类型: 256位哈希值 (B256)
+    /// - 来源: 前序区块执行后的状态树根
+    /// - 用途: 用于验证状态转换的正确性
     #[rkyv(with = B256Def)]
     pub agreed_output: B256,
     /// Derived attributes to be executed
+    /// 待执行的交易属性集合
+    /// - 包含: 时间戳、手续费接收地址、交易列表等
+    /// - 来源: 从L1链的Batch数据解析得到
+    /// - 序列化: 使用OpPayloadAttributesRkyv自定义格式
     #[rkyv(with = OpPayloadAttributesRkyv)]
     pub attributes: OpPayloadAttributes,
     /// Output block from execution
     #[rkyv(with = BlockBuildingOutcomeRkyv)]
     pub artifacts: BlockBuildingOutcome,
     /// Output root after execution
+        /// 执行后的主张状态根（L2链的最终状态）
+    /// - 计算: 基于artifacts中的执行结果生成
+    /// - 用途: 作为下一个区块的agreed_output输入
+    /// - 验证: 需与零知识证明的输出结果一致
     #[rkyv(with = B256Def)]
     pub claimed_output: B256,
 }
@@ -95,26 +74,13 @@ pub struct Execution {
 /// The `CachedExecutor` is a generic struct that allows the caching of executed tasks
 /// and their results. It is designed to work with executors that implement the `Executor`
 /// trait and are thread-safe (`Send` and `Sync`).
-///
-/// # Type Parameters
-/// * `E` - The type of the executor being wrapped, which must implement the `Executor` trait
-///   and be thread-safe (`Send` and `Sync`).
-///
-/// # Fields
-/// * `cache` - A vector of cached execution results. The cached results are wrapped in an
-///   `Arc` to allow sharing across threads safely.
-/// * `executor` - The underlying executor that performs the task execution. This is used
-///   when a task is not found in the cache.
-/// * `collection_target` - An optional shared target for collecting executed tasks. It is wrapped
-///   in an `Arc<Mutex<_>>`, allowing concurrent access and modifications while ensuring thread safety.
-///
-/// # Debugging
-/// The `CachedExecutor` derives the `Debug` trait for usability in debugging scenarios, allowing
-/// the structure and its fields to be printed for inspection.
 #[derive(Debug)]
 pub struct CachedExecutor<E: Executor + Send + Sync + Debug> {
+    /// A vector of cached execution results.
     pub cache: Vec<Arc<Execution>>,
+    /// The underlying block executor used when a task is not found in the cache.
     pub executor: E,
+    /// An optional shared target for collecting executed tasks.
     pub collection_target: Option<Arc<Mutex<Vec<Execution>>>>,
 }
 
@@ -220,6 +186,7 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
         if let Some(collection_target) = &self.collection_target {
             let artifacts = self.executor.execute_payload(attributes.clone()).await?;
             let mut collection_target = collection_target.lock().unwrap();
+	    // 当执行成功后会自动收集到 collection_target
             collection_target.push(Execution {
                 agreed_output,
                 attributes,
@@ -346,7 +313,6 @@ where
 /// This function returns an error if:
 /// - Any of the optional fields fail due to `safe_default` processing.
 /// - The hashing process encounters an invalid value or an error during conversion.
-///
 pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256> {
     let hashed_bytes = [
         attributes
@@ -409,7 +375,7 @@ pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256>
 ///   `Withdrawal` must contain the following fields:
 ///   - `index` (u64): Index of the withdrawal.
 ///   - `validator_index` (u64): Index of the validator associated with the withdrawal.
-///   - `address` (Vec<u8>): The address where the withdrawal is sent.
+///   - `address` (`Vec<u8>`): The address where the withdrawal is sent.
 ///   - `amount` (u64): The amount of the withdrawal.
 ///
 /// # Returns
@@ -439,13 +405,6 @@ pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256>
 ///   for computing the hash.
 /// * The `B256` and `Withdrawal` types must be imported from their respective
 ///   modules or libraries.
-///
-/// # Notes
-///
-/// * The use of `SHA2` implies this function adheres to cryptographic standards
-///   for hash computations.
-/// * Ensure that the input data for `address` is correctly formatted as required
-///   by your application to avoid mismatches or errors in the hash computation.
 pub fn withdrawals_hash(withdrawals: &[Withdrawal]) -> B256 {
     let hashed_bytes = withdrawals
         .iter()
@@ -529,33 +488,30 @@ pub fn transactions_hash(transactions: &Vec<Bytes>) -> B256 {
 ///    a single byte array.
 /// 4. Hashes the resulting byte array using the SHA256 cryptographic hash algorithm.
 /// 5. Converts the resulting hash bytes into a fixed-size 32-byte array and returns it.
-///
-/// # Notes
-/// - The `attributes_hash` function is expected to generate a hash for `Execution`
-///   attributes, and an error from this function will result in a panic.
-/// - The function assumes that all `Execution` objects in the input slice are valid,
-///   and their internal states are consistent.
 pub fn exec_precondition_hash(executions: &[Arc<Execution>]) -> B256 {
     let hashed_bytes = executions
         .iter()
         .map(|e| {
+            // 每个执行记录包含四个验证要素：
             [
-                e.agreed_output.0,
-                attributes_hash(&e.attributes)
-                    .expect("Unhashable attributes.")
+                e.agreed_output.0,  // 执行前状态根（初始状态承诺）
+                attributes_hash(&e.attributes) // 执行参数哈希（交易/手续费等）
+                    .expect("Unhashable attributes.") // 断言哈希计算成功
                     .0,
-                e.artifacts.header.hash().0,
-                e.claimed_output.0,
+                e.artifacts.header.hash().0, // 区块头哈希（执行过程完整性）
+                e.claimed_output.0, // 执行后状态根（最终状态承诺）
             ]
-            .concat()
+            .concat() // 将四个要素拼接为连续字节流
         })
-        .collect::<Vec<_>>()
-        .concat();
+        .collect::<Vec<_>>() // 收集所有执行记录的字节流
+        .concat(); // 将所有记录拼接为单个字节数组
+
+    // 步骤2：计算SHA-256哈希（使用RISC Zero的zkVM兼容实现）
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
         .as_bytes()
         .try_into()
-        .unwrap();
-    digest.into()
+        .unwrap(); // 哈希结果转换为固定长度数组
+    digest.into()// 转换为B256类型返回
 }
 
 #[cfg(test)]

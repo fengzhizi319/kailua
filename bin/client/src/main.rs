@@ -19,22 +19,27 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 解析命令行参数
     let args = KailuaClientArgs::parse();
+    // 初始化日志订阅器
     kona_cli::init_tracing_subscriber(args.kailua_verbosity, None::<EnvFilter>)?;
+
+    // 获取预条件验证数据哈希（若未指定则使用默认值）
     let precondition_validation_data_hash =
         args.precondition_validation_data_hash.unwrap_or_default();
 
+    // 运行证明客户端
     kailua_client::proving::run_proving_client(
-        args.proving,
-        ORACLE_READER,
-        HINT_WRITER,
-        precondition_validation_data_hash,
-        vec![],
-        vec![],
-        vec![],
-        true,
-        true,
-        true,
+        args.proving,        //
+        ORACLE_READER,       //
+        HINT_WRITER,         // 提示写入接口
+        precondition_validation_data_hash, // 验证数据哈希
+        vec![],              // 预留输入参数1（当前为空）
+        vec![],              // 预留输入参数2（当前为空）
+        vec![],              // 预留输入参数3（当前为空）
+        true,                // 启用功能开关1
+        true,                // 启用功能开关2
+        true,                // 是否证明开关
     )
     .await?;
 

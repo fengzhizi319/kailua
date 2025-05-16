@@ -26,21 +26,18 @@ use std::iter::once;
 use std::sync::Arc;
 
 /// Represents the data required to validate the output roots published in a proposal.
-///
-/// # Variants
-///
-/// - `Validity`:
-///   Contains information required to verify a validity proof for a proposal:
-///   - `proposal_l2_head_number`: Represents the block height of the starting l2 root of the proposal.
-///   - `proposal_output_count`: Represents the number of output roots expected in the proposal.
-///   - `output_block_span`: Represents the number of blocks covered by each output root.
-///   - `blob_hashes`: A list of `BlobFetchRequest` instances, one for each blob published in the proposal.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PreconditionValidationData {
+///全局起始区块号（L2链的共识起点）、提案输出总数（预期验证的区块数量）、输出间隔（验证检查点的区块间隔）、blob请求集合
+
     Validity {
+        /// Represents the block height of the starting l2 root of the proposal.
         proposal_l2_head_number: u64,
+        /// Represents the number of output roots expected in the proposal.
         proposal_output_count: u64,
+        /// Represents the number of blocks covered by each output root.
         output_block_span: u64,
+        /// A list of `BlobFetchRequest` instances, one for each blob published in the proposal.
         blob_hashes: Vec<BlobFetchRequest>,
     },
 }
@@ -56,8 +53,7 @@ impl PreconditionValidationData {
     /// A `Vec<u8>` containing the serialized byte representation of the object.
     ///
     /// # Panics
-    /// This function will panic if the `pot::to_vec` method returns an error during serialization,
-    /// which is then unwrapped.
+    /// - If the `pot::to_vec` method returns an error during serialization.
     pub fn to_vec(&self) -> Vec<u8> {
         pot::to_vec(self).unwrap()
     }
@@ -71,8 +67,6 @@ impl PreconditionValidationData {
     /// * `B256` - The 256-bit hash of the object generated using the SHA-256 algorithm.
     ///
     /// # Notes
-    /// * It is assumed that the object implementing this function has a `to_vec` method
-    ///   which represents the object as a byte vector.
     /// * This hash cannot be used to authenticate the precondition, but may be used to
     ///   reference the `PreconditionValidationData` instance in storage.
     pub fn hash(&self) -> B256 {
@@ -82,11 +76,6 @@ impl PreconditionValidationData {
 
     /// This method provides access to the `BlobFetchRequest` objects
     /// contained within the `PreconditionValidationData::Validity` variant.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if called on a variant of
-    /// `PreconditionValidationData` other than `Validity`.
     pub fn blob_fetch_requests(&self) -> &[BlobFetchRequest] {
         match self {
             PreconditionValidationData::Validity {
@@ -99,11 +88,7 @@ impl PreconditionValidationData {
     }
 
     /// This function retrieves the `blob_hash` associated with each blob fetch request
-    /// and computes a consolidated hash using the `blobs_hash` function.
-    ///
-    /// # Returns
-    ///
-    /// * `B256` - The computed hash value representing all blob fetch requests.
+    /// and returns a consolidated hash using the `blobs_hash` function.
     pub fn blobs_hash(&self) -> B256 {
         blobs_hash(self.blob_fetch_requests().iter().map(|b| &b.blob_hash.hash))
     }
@@ -122,10 +107,6 @@ impl PreconditionValidationData {
     /// - It then calculates the `blobs_hash` using the hashes of individual blobs in the list.
     /// - The final precondition hash is derived by invoking the `equivalence_precondition_hash`
     ///   function with the above components.
-    ///
-    /// # Note
-    /// This method assumes the `PreconditionValidationData` is in the `Validity` variant. If no other
-    /// variants are expected or added, this function will only operate on the relevant data structure.
     pub fn precondition_hash(&self) -> B256 {
         match self {
             PreconditionValidationData::Validity {
@@ -137,6 +118,7 @@ impl PreconditionValidationData {
                 proposal_l2_head_number,
                 proposal_output_count,
                 output_block_span,
+                // 计算blob集合的哈希（聚合所有blob哈希）
                 blobs_hash(blobs.iter().map(|b| &b.blob_hash.hash)),
             ),
         }
@@ -204,33 +186,6 @@ pub fn validity_precondition_hash(
 ///
 /// # Returns
 /// - `B256`: A new `B256` value representing the SHA-256 hash of the concatenated hash bytes.
-///
-/// # Example
-/// ```
-/// use alloy_primitives::B256;
-/// use kailua_common::precondition::blobs_hash;
-///
-/// let hash1 = B256::from_slice(&[0u8; 32]);
-/// let hash2 = B256::from_slice(&[1u8; 32]);
-/// let hash3 = B256::from_slice(&[2u8; 32]);
-///
-/// let combined_hash = blobs_hash(vec![&hash1, &hash2, &hash3].into_iter());
-/// ```
-///
-/// In the example above, the `combined_hash` is computed by concatenating `hash1`, `hash2`,
-/// and `hash3` into a single byte sequence and then hashing it using SHA-256.
-///
-/// # Notes
-/// - The function assumes that the input `blob_hashes` iterator contains valid `B256` hashes
-///   and that the resulting concatenated byte vector does not exceed memory limitations.
-///
-/// # Dependencies
-/// - This function relies on the `SHA2` hashing utility and the `B256` type for handling
-///   byte-level data and hash construction.
-///
-/// # Panics
-/// - This function does not explicitly handle cases where memory allocation for the concatenated
-///   byte vector fails, potentially causing a panic.
 pub fn blobs_hash<'a>(blob_hashes: impl Iterator<Item = &'a B256>) -> B256 {
     let blobs_hash_bytes = blob_hashes
         .map(|h| h.as_slice())
@@ -243,17 +198,13 @@ pub fn blobs_hash<'a>(blob_hashes: impl Iterator<Item = &'a B256>) -> B256 {
 /// This function retrieves and deserializes the precondition validation data from an oracle and fetches the associated blobs
 /// necessary for further processing. If the `precondition_data_hash` is zero, the function will return `None`.
 ///
-/// # Type Parameters
-/// - `O`: Represents the oracle client type. It must implement the `CommsClient` trait and be `Send`, `Sync`, and `Debug`.
-/// - `B`: Represents the blob provider type. It must implement the `BlobProvider` trait and be `Send`, `Sync`, `Debug`, and `Clone`.
-///
 /// # Parameters
 /// - `precondition_data_hash`: A hash of type `B256` representing the identifier of the precondition data to load.
 /// - `oracle`: An `Arc`-wrapped oracle that implements the `CommsClient`, used to retrieve the precondition validation data.
 /// - `beacon`: A mutable reference to an object implementing the `BlobProvider` used for fetching blob data.
 ///
 /// # Returns
-/// Returns a `Result` containing:
+/// A `Result` containing:
 /// - `Some((PreconditionValidationData, Vec<Blob>))` if the precondition data and blobs are successfully loaded.
 /// - `None` if the `precondition_data_hash` is zero (indicating no data needs to be loaded).
 ///
@@ -263,9 +214,6 @@ pub fn blobs_hash<'a>(blob_hashes: impl Iterator<Item = &'a B256>) -> B256 {
 /// - Returns an error if there is an issue while retrieving the precondition validation data from the oracle.
 /// - Returns an error if deserialization of the data fails.
 /// - Returns an error if there is a problem fetching blobs from the blob provider.
-///
-/// # Notes
-/// - The `precondition_data_hash` must not be zero if data needs to be loaded.
 pub async fn load_precondition_data<
     O: CommsClient + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
@@ -277,6 +225,7 @@ pub async fn load_precondition_data<
 where
     <B as BlobProvider>::Error: Debug,
 {
+    // 零值哈希表示不需要预验证，直接返回
     if precondition_data_hash.is_zero() {
         return Ok(None);
     }
@@ -293,7 +242,10 @@ where
     .context("Pot::from_slice")?;
     let mut blobs = Vec::new();
     // Read the blobs to validate divergence
+    // 遍历预验证数据中的每个blob请求
     for request in precondition_validation_data.blob_fetch_requests() {
+        // 从beacon节点获取具体的blob数据
+        // 使用块引用和blob哈希定位具体数据
         blobs.push(
             *beacon
                 .get_blobs(&request.block_ref, &[request.blob_hash.clone()])
@@ -371,22 +323,6 @@ where
 ///   matches the field element representation of the hash.
 /// - In case of mismatching field element values, the specific error points to the
 ///   exact field position, blob index, and block number where the mismatch occurs.
-///
-/// # Errors
-///
-/// - When the `proposal_l2_head_number` exceeds the `proof_l2_head_number`.
-/// - When field element mismatches are detected between the calculated values and
-///   the provided blob data.
-/// - When unexpected non-zero trail values are encountered in the blobs.
-/// - If an output block number exceeds the maximum allowed block number.
-///
-/// # Notes
-///
-/// - This function is critical for ensuring the integrity of L2 precondition proposal
-///   validations by comparing locally constructed outputs to globally proposed data.
-/// - It is assumed that the blob data structure properly aligns with the
-///   `FIELD_ELEMENTS_PER_BLOB` constant and the specific use case.
-///
 pub fn validate_precondition(
     precondition_validation_data: PreconditionValidationData,
     blobs: Vec<Blob>,
@@ -404,6 +340,7 @@ pub fn validate_precondition(
             let proposal_root_claim_block_number =
                 proposal_l2_head_number + proposal_output_count * output_block_span;
             // Ensure local and global block ranges match
+	    // 验证1：检查本地与全局区块范围一致性
             if proof_l2_head_number < proposal_l2_head_number {
                 bail!(
                     "Validity precondition proposal starting block #{} > proof agreed l2 head #{}",
@@ -421,28 +358,37 @@ pub fn validate_precondition(
                 return Ok(precondition_hash);
             }
             // Calculate blob index pointer
+	    // 遍历每个输出根进行密码学验
             for (i, output_hash) in output_roots.iter().enumerate() {
                 let output_block_number = proof_l2_head_number + i as u64 + 1;
+		// 验证2：区块号不超过提案范围
                 if output_block_number > proposal_root_claim_block_number {
                     // We should not derive outputs beyond the proposal root claim
                     bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
                 }
                 let offset = output_block_number - proposal_l2_head_number;
                 if offset % output_block_span != 0 {
+		// 跳过非检查点的区块（根据输出间隔）
                     // We only check equivalence every output_block_span blocks
                     continue;
                 }
                 let intermediate_output_offset = (offset / output_block_span) - 1;
                 let blob_index = (intermediate_output_offset / FIELD_ELEMENTS_PER_BLOB) as usize;
                 let fe_position = (intermediate_output_offset % FIELD_ELEMENTS_PER_BLOB) as usize;
-                let blob_fe_index = 32 * fe_position;
+                let blob_fe_index = 32 * fe_position;// 每个域元素占32字节
                 // Verify fe equivalence to computed outputs for all but last output
-                match intermediate_output_offset.cmp(&(proposal_output_count - 1)) {
+                // 密码学验证阶段
+		match intermediate_output_offset.cmp(&(proposal_output_count - 1)) {
                     Ordering::Less => {
                         // verify equivalence to blob
+                        // 验证3：Blob数据等价性检查
+                        // 步骤3a：从blob中提取密码学承诺
                         let blob_fe_slice = &blobs[blob_index][blob_fe_index..blob_fe_index + 32];
+                        // 步骤3b：将输出根哈希转换为椭圆曲线域元素
                         let output_fe = hash_to_fe(*output_hash);
+                        // 步骤3c：序列化域元素为32字节大端格式
                         let output_fe_bytes = output_fe.to_be_bytes::<32>();
+                        // 步骤3d：比对blob承诺与实际计算值
                         if blob_fe_slice != output_fe_bytes.as_slice() {
                             bail!(
                                 "Bad fe #{} in blob {} for block #{}: Expected {} found {} ",
@@ -455,6 +401,7 @@ pub fn validate_precondition(
                         }
                     }
                     Ordering::Equal => {
+		    // 验证4：尾部数据清零验证（防数据填充攻击）
                         if proposal_output_count > 1 {
                             // verify zeroed trail data
                             if blob_index != blobs.len() - 1 {
