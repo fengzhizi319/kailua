@@ -96,6 +96,7 @@ pub async fn compute_fpvm_proof(
             "Performing derivation-only run for {} executions.",
             execution_cache.len()
         );
+        //先执行正确性验证，但不执行证明，同时验证是否发生WitnessSizeError错误
         let derivation_only_result = tasks::compute_oneshot_task(
             args.clone(),
             rollup_config.clone(),
@@ -369,7 +370,7 @@ pub async fn compute_cached_proof(
     stitched_executions: Vec<Vec<Execution>>,// 拼接的区块执行数据
     stitched_boot_info: Vec<StitchedBootInfo>,// 拼接的启动信息
     stitched_proofs: Vec<Receipt>,//拼接的区块执行数据和证明
-    prove_snark: bool,// SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+    prove_snark: bool,// SNARK证明类型标志，true表示groth16证明，false表示succinct证明
     force_attempt: bool,// 强制尝试模式（忽略资源限制）
     seek_proof: bool,// 实际执行证明生成开关，true表示需要生成证明，false表示仅验证正确性，而不生成证明
 ) -> Result<Receipt, ProvingError> {
@@ -409,9 +410,9 @@ pub async fn compute_cached_proof(
             stitched_executions, // 拼接的区块执行轨迹
             stitched_boot_info, // 启动配置信息
             stitched_proofs, // 已有证明片段
-            prove_snark, // SNARK生成开关，false
-            force_attempt, // 强制模式（忽略风险），true
-            seek_proof, // 查找现有证明开关，false
+            prove_snark, // SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+            force_attempt, // 强制尝试模式，true表示忽略资源限制
+            seek_proof, // 证明生成开关
         )
             .await?; // 异步等待证明生成，如果生成失败则返回错误
     }

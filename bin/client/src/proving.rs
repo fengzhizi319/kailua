@@ -92,7 +92,7 @@ pub async fn run_proving_client<P, H>(
     stitched_executions: Vec<Vec<Execution>>,// 待证明的执行轨迹集合（二维结构支持分片）
     stitched_boot_info: Vec<StitchedBootInfo>,
     stitched_proofs: Vec<Receipt>,// 预生成的子证明集合（用于证明缝合）
-    prove_snark: bool,// SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+    prove_snark: bool,//SNARK证明类型标志，true表示groth16证明，false表示succinct证明
     force_attempt: bool,// 强制尝试模式（忽略资源限制）
     seek_proof: bool,// 实际执行证明生成开关，true表示需要生成证明，false表示仅验证正确性，而不生成证明
 ) -> Result<(), ProvingError>

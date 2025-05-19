@@ -165,9 +165,9 @@ pub async fn compute_oneshot_task(
     stitched_executions: Vec<Vec<Execution>>, // 已拼接的区块执行轨迹集合
     stitched_boot_info: Vec<StitchedBootInfo>,// 多个子证明的启动信息集合
     stitched_proofs: Vec<Receipt>,            // 已生成的子证明集合
-    prove_snark: bool,                       // SNARK证明生成开关（true启用高压缩证明）
+    prove_snark: bool,                       // SNARK证明类型，true表示groth16，false表示succinct
     force_attempt: bool,                      // 强制证明尝试标志（跳过安全检查）
-    seek_proof: bool,                         // 查找现有证明标志（优先使用缓存）
+    seek_proof: bool,                         // 是否生成证明
     task_sender: Sender<Oneshot>,             // 异步任务发送通道（用于工作线程池）
 ) -> Result<Receipt, ProvingError> {
     // create proving task
