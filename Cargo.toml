@@ -120,3 +120,6 @@ lto = "fat"
 [profile.release.build-override]
 codegen-units = 1
 opt-level = 3
+
+[profile.dev.build-override]
+debug = true  # 为构建依赖启用调试信息

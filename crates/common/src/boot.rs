@@ -89,8 +89,9 @@ pub mod tests {
 
     #[test]
     fn test_stitched_boot_info() {
+        let bootinfos=gen_boot_infos(12, 64);
         // test serde
-        for info in gen_boot_infos(12, 64) {
+        for info in bootinfos {
             let recoded = rkyv::from_bytes::<StitchedBootInfo, Error>(
                 rkyv::to_bytes::<Error>(&info).unwrap().as_ref(),
             )

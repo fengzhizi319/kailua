@@ -360,42 +360,46 @@ pub mod tests {
 
     #[test]
     fn test_preloaded_blob_provider_tampering() {
+        // 生成 64 个合法的 witness 数据（包含 blob、commitment、proof）
         let witness_data = BlobWitnessData::from(gen_blobs(64));
-        // Fail if any bit is wrong
+        // 遍历每个 blob，分别对 blob、commitment、proof 做单 bit 篡改
         for i in 0..witness_data.blobs.len() {
-            // Tamper with blob data
+            // 篡改 blob 数据的每一位
             (0..BYTES_PER_BLOB).into_par_iter().for_each(|j| {
                 let mut tampered_witness_data = witness_data.clone();
-                tampered_witness_data.blobs[i].0[j] ^= 1;
-
+                tampered_witness_data.blobs[i].0[j] ^= 1; // 翻转第 j 位
+    
                 assert_ne!(witness_data.blobs[i], tampered_witness_data.blobs[i]);
+                // 构造 provider 时应 panic（批量验证失败）
                 let result =
                     std::panic::catch_unwind(|| PreloadedBlobProvider::from(tampered_witness_data));
                 assert!(result.is_err());
             });
-            // Tamper with commitment
+            // 篡改 commitment 的每一位
             (0..BYTES_PER_COMMITMENT).into_par_iter().for_each(|j| {
                 (0..8usize).into_par_iter().for_each(|k| {
                     let mut tampered_witness_data = witness_data.clone();
-                    tampered_witness_data.commitments[i][j] ^= 1 << k;
-
+                    tampered_witness_data.commitments[i][j] ^= 1 << k; // 翻转第 k 位
+    
                     assert_ne!(
                         witness_data.commitments[i],
                         tampered_witness_data.commitments[i]
                     );
+                    // 构造 provider 时应 panic
                     let result = std::panic::catch_unwind(|| {
                         PreloadedBlobProvider::from(tampered_witness_data)
                     });
                     assert!(result.is_err());
                 });
             });
-            // Tamper with proof
+            // 篡改 proof 的每一位
             (0..BYTES_PER_PROOF).into_par_iter().for_each(|j| {
                 (0..8usize).into_par_iter().for_each(|k| {
                     let mut tampered_witness_data = witness_data.clone();
-                    tampered_witness_data.proofs[i][j] ^= 1 << k;
-
+                    tampered_witness_data.proofs[i][j] ^= 1 << k; // 翻转第 k 位
+    
                     assert_ne!(witness_data.proofs[i], tampered_witness_data.proofs[i]);
+                    // 构造 provider 时应 panic
                     let result = std::panic::catch_unwind(|| {
                         PreloadedBlobProvider::from(tampered_witness_data)
                     });
@@ -403,7 +407,7 @@ pub mod tests {
                 });
             });
         }
-        // Succeed on genuine data
+        // 原始数据应能正常通过验证
         let _ = PreloadedBlobProvider::from(witness_data);
     }
 
@@ -439,25 +443,32 @@ pub mod tests {
     }
 
     #[tokio::test]
+    /// 测试 PreloadedBlobProvider 在查询不存在的 blob 哈希时应返回空结果
     async fn test_blob_provider_bad_query() {
+        // 生成 32 个唯一的 Blob
         let blobs = gen_blobs(32);
+        // 构造 witness 数据（包含 blob、commitment、proof）
         let blob_witness_data = BlobWitnessData::from(blobs.clone());
-        // exhaust the provider and find nothing
+        // 构造一组不存在的 blob 哈希（对每个 commitment 的哈希取反）
         let indexed_hashes = blob_witness_data
             .commitments
             .iter()
             .map(|c| IndexedBlobHash {
                 index: 0,
-                hash: !kzg_to_versioned_hash(c.as_slice()), // invert the expected hash
+                hash: !kzg_to_versioned_hash(c.as_slice()), // 取反，保证查不到
             })
             .collect::<Vec<_>>();
+        // 用 witness 数据初始化 provider
         let mut blob_provider = PreloadedBlobProvider::from(blob_witness_data);
+        // 查询这些不存在的哈希，期望返回空
         let retrieved = blob_provider
             .get_blobs(&Default::default(), &indexed_hashes)
             .await
             .unwrap();
-
+    
+        // 应该查不到任何 blob
         assert!(retrieved.is_empty());
+        // provider 的 entries 应被消耗完
         assert!(blob_provider.entries.is_empty());
     }
 }

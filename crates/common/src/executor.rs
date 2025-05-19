@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Execution {
     /// Output root prior to execution
-        /// 执行前的共识状态根（L2链的初始状态）
+    /// 执行前的共识状态根（L2链的初始状态）
     /// - 类型: 256位哈希值 (B256)
     /// - 来源: 前序区块执行后的状态树根
     /// - 用途: 用于验证状态转换的正确性
@@ -61,7 +61,7 @@ pub struct Execution {
     #[rkyv(with = BlockBuildingOutcomeRkyv)]
     pub artifacts: BlockBuildingOutcome,
     /// Output root after execution
-        /// 执行后的主张状态根（L2链的最终状态）
+    /// 执行后的主张状态根（L2链的最终状态）
     /// - 计算: 基于artifacts中的执行结果生成
     /// - 用途: 作为下一个区块的agreed_output输入
     /// - 验证: 需与零知识证明的输出结果一致
@@ -186,7 +186,7 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
         if let Some(collection_target) = &self.collection_target {
             let artifacts = self.executor.execute_payload(attributes.clone()).await?;
             let mut collection_target = collection_target.lock().unwrap();
-	    // 当执行成功后会自动收集到 collection_target
+            // 当执行成功后会自动收集到 collection_target
             collection_target.push(Execution {
                 agreed_output,
                 attributes,
@@ -333,20 +333,20 @@ pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256>
                 .map(|wds| withdrawals_hash(wds.as_slice())),
             B256::ZERO,
         )
-        .context("safe_default withdrawals")?
-        .as_slice(),
+            .context("safe_default withdrawals")?
+            .as_slice(),
         safe_default(
             attributes.payload_attributes.parent_beacon_block_root,
             B256::ZERO,
         )
-        .context("safe_default parent_beacon_block_root")?
-        .as_slice(),
+            .context("safe_default parent_beacon_block_root")?
+            .as_slice(),
         safe_default(
             attributes.transactions.as_ref().map(transactions_hash),
             B256::ZERO,
         )
-        .context("safe_default transactions_hash")?
-        .as_slice(),
+            .context("safe_default transactions_hash")?
+            .as_slice(),
         &[safe_default(attributes.no_tx_pool, false).context("safe_default no_tx_pool")? as u8],
         safe_default(attributes.gas_limit, u64::MAX)
             .context("safe_default gas_limit")?
@@ -356,7 +356,7 @@ pub fn attributes_hash(attributes: &OpPayloadAttributes) -> anyhow::Result<B256>
             .context("safe_default eip_1559_params")?
             .as_slice(),
     ]
-    .concat();
+        .concat();
     let digest: [u8; 32] = SHA2::hash_bytes(hashed_bytes.as_slice())
         .as_bytes()
         .try_into()?;
@@ -415,7 +415,7 @@ pub fn withdrawals_hash(withdrawals: &[Withdrawal]) -> B256 {
                 w.address.as_slice(),
                 w.amount.to_be_bytes().as_slice(),
             ]
-            .concat()
+                .concat()
         })
         .collect::<Vec<_>>()
         .concat();
@@ -501,7 +501,7 @@ pub fn exec_precondition_hash(executions: &[Arc<Execution>]) -> B256 {
                 e.artifacts.header.hash().0, // 区块头哈希（执行过程完整性）
                 e.claimed_output.0, // 执行后状态根（最终状态承诺）
             ]
-            .concat() // 将四个要素拼接为连续字节流
+                .concat() // 将四个要素拼接为连续字节流
         })
         .collect::<Vec<_>>() // 收集所有执行记录的字节流
         .concat(); // 将所有记录拼接为单个字节数组
@@ -597,24 +597,27 @@ pub mod tests {
     }
 
     #[test]
+    /// 测试 exec_precondition_hash 的唯一性和序列化一致性
     fn test_exec_precondition_hash() {
         let executions = gen_executions(16);
-        // check hash uniqueness over all subsequences
+        // 用于存储所有子区间的哈希，检测唯一性
         let hashes = Arc::new(Mutex::new(HashSet::new()));
+        // 并行遍历所有可能的子区间
         rayon::scope(|_| {
             (0..executions.len()).into_par_iter().for_each(|i| {
                 ((i + 1)..executions.len()).into_par_iter().for_each(|j| {
-                    // test hashing uniqueness
+                    // 计算当前子区间的哈希
                     let hash = exec_precondition_hash(&executions[i..j]);
                     {
+                        // 保证哈希值唯一，若重复则断言失败
                         assert!(hashes.lock().unwrap().insert(hash));
                     }
-                    // test serde
+                    // 测试 rkyv 序列化/反序列化后哈希值不变
                     let trace = executions[i..j].to_vec();
                     let recoded = rkyv::from_bytes::<Vec<Arc<Execution>>, Error>(
                         rkyv::to_bytes::<Error>(&trace).unwrap().as_ref(),
                     )
-                    .unwrap();
+                        .unwrap();
                     assert_eq!(hash, exec_precondition_hash(&recoded));
                 });
             });
@@ -622,26 +625,33 @@ pub mod tests {
     }
 
     #[tokio::test]
+    /// 测试 CachedExecutor 的缓存命中、收集和回退逻辑
     async fn test_cached_executor() {
+        // 生成 128 个模拟 Execution
         let executions = gen_executions(128);
+        // 拆分出 artifacts 和 claimed_output，反向排列以便模拟弹出
         let (outcomes, mut output_roots): (Vec<_>, Vec<_>) = executions
             .iter()
             .rev()
             .map(|e| (e.artifacts.clone(), e.claimed_output))
             .unzip();
+        // 补充初始 output root
         output_roots.push(keccak256(String::from("output 0")));
         let test_executor = TestExecutor {
             outcomes,
             output_roots,
         };
 
-        // test without cache or collection target
+        // 1. 不带 cache/collection_target，直接走底层 executor
+        // 初始化一个没有缓存和收集目标的 CachedExecutor
         let mut cached_executor = CachedExecutor {
             cache: vec![],
             executor: test_executor.clone(),
             collection_target: None,
         };
+        // 依次对每个 execution 进行执行和校验
         for execution in &executions {
+            // 执行 payload，结果应与预期 artifacts.header 一致
             assert_eq!(
                 cached_executor
                     .execute_payload(execution.attributes.clone())
@@ -650,11 +660,13 @@ pub mod tests {
                     .header,
                 execution.artifacts.header.clone()
             );
+            // 等待执行器就绪
             cached_executor.wait_until_ready().await;
+            // 更新安全头为当前执行结果
             cached_executor.update_safe_head(execution.artifacts.header.clone());
         }
 
-        // test with collection target
+        // 2. 仅带 collection_target，执行结果应被收集
         let collection_target = Arc::new(Mutex::new(vec![]));
         let mut cached_executor = CachedExecutor {
             cache: vec![],
@@ -671,6 +683,7 @@ pub mod tests {
                 execution.artifacts.header.clone()
             );
             {
+                // 检查收集到的结果与期望一致
                 let collected = collection_target.lock().unwrap();
                 assert_eq!(
                     collected.last().unwrap().artifacts.header,
@@ -681,18 +694,21 @@ pub mod tests {
             cached_executor.update_safe_head(execution.artifacts.header.clone());
         }
 
-        // test with caching
+        // 3. 带 cache 且 collection_target，命中缓存时不会收集
+        // 初始化收集目标和缓存（缓存顺序与执行顺序相反，保证每次都命中缓存）
         let collection_target = Arc::new(Mutex::new(vec![]));
         let cache = {
             let mut cache = executions.clone();
             cache.reverse();
             cache
         };
+        // 构造带缓存和收集目标的 CachedExecutor
         let mut cached_executor = CachedExecutor {
             cache,
             executor: test_executor.clone(),
             collection_target: Some(collection_target.clone()),
         };
+        // 依次执行每个 execution，均应命中缓存
         for execution in &executions {
             assert_eq!(
                 cached_executor
@@ -703,22 +719,28 @@ pub mod tests {
                 execution.artifacts.header.clone()
             );
             {
+                // 命中缓存时，collection_target 应始终为空
                 let collected = collection_target.lock().unwrap();
                 assert!(collected.is_empty());
             }
+            // 等待执行器就绪并更新安全头
             cached_executor.wait_until_ready().await;
             cached_executor.update_safe_head(execution.artifacts.header.clone());
         }
 
-        // test with faulty caching
+        // 4. cache 顺序与执行顺序不符，仅最后一次命中缓存，其余走收集
+        // 初始化收集目标和缓存（cache 顺序与 executions 相同）
         let collection_target = Arc::new(Mutex::new(vec![]));
         let cache = executions.clone();
+        // 构造带缓存和收集目标的 CachedExecutor
         let mut cached_executor = CachedExecutor {
             cache,
             executor: test_executor.clone(),
             collection_target: Some(collection_target.clone()),
         };
+        // 依次执行每个 execution
         for execution in &executions {
+            // 执行 payload，结果应与预期 artifacts.header 一致
             assert_eq!(
                 cached_executor
                     .execute_payload(execution.attributes.clone())
@@ -727,10 +749,11 @@ pub mod tests {
                     .header,
                 execution.artifacts.header.clone()
             );
+            // 等待执行器就绪并更新安全头
             cached_executor.wait_until_ready().await;
             cached_executor.update_safe_head(execution.artifacts.header.clone());
         }
-        // only the last execution was a cache hit
+        // 只有最后一次是缓存命中，其余都被收集
         assert_eq!(
             collection_target.lock().unwrap().len(),
             executions.len() - 1
