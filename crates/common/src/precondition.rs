@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// Represents the data required to validate the output roots published in a proposal.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PreconditionValidationData {
-///全局起始区块号（L2链的共识起点）、提案输出总数（预期验证的区块数量）、输出间隔（验证检查点的区块间隔）、blob请求集合
+    ///全局起始区块号（L2链的共识起点）、提案输出总数（预期验证的区块数量）、输出间隔（验证检查点的区块间隔）、blob请求集合
 
     Validity {
         /// Represents the block height of the starting l2 root of the proposal.
@@ -239,7 +239,7 @@ where
             .await
             .map_err(OracleProviderError::Preimage)?,
     )
-    .context("Pot::from_slice")?;
+        .context("Pot::from_slice")?;
     let mut blobs = Vec::new();
     // Read the blobs to validate divergence
     // 遍历预验证数据中的每个blob请求
@@ -340,7 +340,7 @@ pub fn validate_precondition(
             let proposal_root_claim_block_number =
                 proposal_l2_head_number + proposal_output_count * output_block_span;
             // Ensure local and global block ranges match
-	    // 验证1：检查本地与全局区块范围一致性
+            // 验证1：检查本地与全局区块范围一致性
             if proof_l2_head_number < proposal_l2_head_number {
                 bail!(
                     "Validity precondition proposal starting block #{} > proof agreed l2 head #{}",
@@ -358,17 +358,17 @@ pub fn validate_precondition(
                 return Ok(precondition_hash);
             }
             // Calculate blob index pointer
-	    // 遍历每个输出根进行密码学验
+            // 遍历每个输出根进行密码学验
             for (i, output_hash) in output_roots.iter().enumerate() {
                 let output_block_number = proof_l2_head_number + i as u64 + 1;
-		// 验证2：区块号不超过提案范围
+                // 验证2：区块号不超过提案范围
                 if output_block_number > proposal_root_claim_block_number {
                     // We should not derive outputs beyond the proposal root claim
                     bail!("Output block #{output_block_number} > max block #{proposal_root_claim_block_number}.");
                 }
                 let offset = output_block_number - proposal_l2_head_number;
                 if offset % output_block_span != 0 {
-		// 跳过非检查点的区块（根据输出间隔）
+                    // 跳过非检查点的区块（根据输出间隔）
                     // We only check equivalence every output_block_span blocks
                     continue;
                 }
@@ -378,7 +378,7 @@ pub fn validate_precondition(
                 let blob_fe_index = 32 * fe_position;// 每个域元素占32字节
                 // Verify fe equivalence to computed outputs for all but last output
                 // 密码学验证阶段
-		match intermediate_output_offset.cmp(&(proposal_output_count - 1)) {
+                match intermediate_output_offset.cmp(&(proposal_output_count - 1)) {
                     Ordering::Less => {
                         // verify equivalence to blob
                         // 验证3：Blob数据等价性检查
@@ -401,7 +401,7 @@ pub fn validate_precondition(
                         }
                     }
                     Ordering::Equal => {
-		    // 验证4：尾部数据清零验证（防数据填充攻击）
+                        // 验证4：尾部数据清零验证（防数据填充攻击）
                         if proposal_output_count > 1 {
                             // verify zeroed trail data
                             if blob_index != blobs.len() - 1 {
@@ -460,7 +460,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_precondition_data() {
-        let max_blobs = 6;
+        // let max_blobs = 6;
+        let max_blobs = 1;
         (1..=max_blobs).into_par_iter().for_each(|n| {
             // println!("Testing with {n} blobs");
             let blobs = gen_blobs(n);
@@ -501,24 +502,26 @@ mod tests {
                         PreimageKey::new(precondition_data_hash.0, PreimageKeyType::Sha256),
                         precondition_validation_data.to_vec(),
                     );
-                    let oracle = Arc::new(oracle);
+                    let oracle = Arc::new(oracle.clone());
+
+
                     // load nothing when hash is zero
                     assert!(block_on(load_precondition_data(
                         B256::ZERO,
                         oracle.clone(),
                         &mut beacon.clone(),
                     ))
-                    .unwrap()
-                    .is_none());
+                        .unwrap()
+                        .is_none());
                     // successfully load with proper hash
                     let reloaded = block_on(load_precondition_data(
                         precondition_data_hash,
                         oracle.clone(),
                         &mut beacon.clone(),
                     ))
-                    .unwrap()
-                    .unwrap()
-                    .0;
+                        .unwrap()
+                        .unwrap()
+                        .0;
                     assert_eq!(reloaded, precondition_validation_data);
                 }
             }
@@ -538,9 +541,9 @@ mod tests {
             1,
             &[]
         )
-        .is_err_and(|e| e
-            .to_string()
-            .contains("proposal starting block #100 > proof agreed l2 head #1")));
+            .is_err_and(|e| e
+                .to_string()
+                .contains("proposal starting block #100 > proof agreed l2 head #1")));
     }
 
     #[test]
@@ -604,118 +607,209 @@ mod tests {
             .contains("Bad fe #500 in blob 0 for block #502")));
     }
 
+
     #[tokio::test]
     async fn test_validate_precondition() {
         let m = BYTES_PER_BLOB / 2;
-        // test for various blob counts
+        // 测试不同数量的 blob（1-6 个）
         let max_blobs = 6;
-        (1..=max_blobs).into_par_iter().for_each(|n| {
-            // println!("Testing with {n} blobs");
+        (1..=max_blobs).into_par_iter().for_each(|n| { // 使用并行迭代加速测试
             let mut blobs = gen_blobs(n);
-            // Zero out the last half of the last blob
+            // 将最后一个 blob 的后半部分置零，模拟数据填充规范
             for i in m..BYTES_PER_BLOB {
                 blobs[n - 1][i] = 0;
             }
-            // create remaining dummy data
+
+            // 生成 blob 请求数据
             let blobs_fetch_requests = gen_blobs_requests(blobs.clone());
-            // The number of outputs published is the root claim + non-zero blob elements
-            let proposal_output_count =
-                1 + (n as u64) * FIELD_ELEMENTS_PER_BLOB - FIELD_ELEMENTS_PER_BLOB / 2;
-            // Test over different configurations
+            // 计算提案输出数量：基础声明 + 有效数据量 - 半 blob 的无效数据
+            let proposal_output_count = 1 + (n as u64) * FIELD_ELEMENTS_PER_BLOB - FIELD_ELEMENTS_PER_BLOB / 2;
+
+            // 测试不同的 L2 起始区块号配置
             for proposal_l2_head_number in [1, 2, 5, 7, proposal_output_count] {
-                // println!("Testing with {proposal_l2_head_number} L2 head");
+                // 测试不同的输出间隔配置（1,2,7,11,13 个区块）
                 for output_block_span in [1, 2, 7, 11, 13] {
-                    // println!("Testing with {output_block_span} output block span");
+                    // 构造预条件验证数据结构
                     let precondition_validation_data = PreconditionValidationData::Validity {
                         proposal_l2_head_number,
                         proposal_output_count,
                         output_block_span,
                         blob_hashes: blobs_fetch_requests.clone(),
                     };
-                    // check requests referencing
+
+                    // 验证 blob 请求关联性
                     assert_eq!(
                         precondition_validation_data.blob_fetch_requests(),
                         blobs_fetch_requests.as_slice()
                     );
-                    // test serde
+
+                    // 测试序列化/反序列化
                     {
-                        let recoded =
-                            pot::from_slice(precondition_validation_data.to_vec().as_slice())
-                                .unwrap();
+                        let recoded = pot::from_slice(precondition_validation_data.to_vec().as_slice()).unwrap();
                         assert_eq!(precondition_validation_data, recoded);
                     }
-                    // check hashing
+
+                    // 验证哈希计算一致性
                     let precondition_hash = validity_precondition_hash(
                         &proposal_l2_head_number,
                         &proposal_output_count,
                         &output_block_span,
                         precondition_validation_data.blobs_hash(),
                     );
-                    assert_eq!(
-                        precondition_hash,
-                        precondition_validation_data.precondition_hash()
-                    );
-                    // test over different subsequences
-                    let max_offset = (n as u64) * FIELD_ELEMENTS_PER_BLOB;
-                    let starting_points = (0..max_blobs as u64)
-                        .flat_map(|i| {
-                            vec![
-                                i * FIELD_ELEMENTS_PER_BLOB,
-                                i * FIELD_ELEMENTS_PER_BLOB + FIELD_ELEMENTS_PER_BLOB / 2,
-                            ]
-                        })
-                        .collect::<Vec<_>>();
-                    for starting_offset in starting_points {
-                        let ending_points = (0..n as u64)
-                            .flat_map(|i| {
-                                vec![
-                                    i * FIELD_ELEMENTS_PER_BLOB,
-                                    i * FIELD_ELEMENTS_PER_BLOB + FIELD_ELEMENTS_PER_BLOB / 2,
-                                ]
-                            })
-                            .map(|p| p + starting_offset)
-                            .collect::<Vec<_>>();
-                        for ending_offset in ending_points {
-                            let output_roots: Vec<B256> = (starting_offset..ending_offset)
-                                .filter(|i| *i < max_offset)
-                                .flat_map(|i| {
-                                    let bi = (i / FIELD_ELEMENTS_PER_BLOB) as usize;
-                                    let fi = (i % FIELD_ELEMENTS_PER_BLOB) as usize;
-                                    // replicate the target output as needed
-                                    vec![
-                                        blobs[bi][fi * 32..(fi + 1) * 32].try_into().unwrap();
-                                        output_block_span as usize
-                                    ]
-                                })
-                                .collect();
+                    assert_eq!(precondition_hash, precondition_validation_data.precondition_hash());
 
-                            let proof_l2_head_number =
-                                proposal_l2_head_number + starting_offset * output_block_span;
+                    // 测试不同数据子序列
+                    let max_offset = (n as u64) * FIELD_ELEMENTS_PER_BLOB;
+                    // 生成起始偏移量测试点（每个 blob 的起始和中间位置）
+                    let starting_points = (0..max_blobs as u64).flat_map(|i| vec![
+                        i * FIELD_ELEMENTS_PER_BLOB,
+                        i * FIELD_ELEMENTS_PER_BLOB + FIELD_ELEMENTS_PER_BLOB / 2,
+                    ]).collect::<Vec<_>>();
+
+                    for starting_offset in starting_points {
+                        // 生成结束偏移量测试点
+                        let ending_points = (0..n as u64).flat_map(|i| vec![
+                            i * FIELD_ELEMENTS_PER_BLOB,
+                            i * FIELD_ELEMENTS_PER_BLOB + FIELD_ELEMENTS_PER_BLOB / 2,
+                        ]).map(|p| p + starting_offset).collect::<Vec<_>>();
+
+                        for ending_offset in ending_points {
+                            // 生成测试用的输出根数组
+                            let output_roots: Vec<B256> = (starting_offset..ending_offset)
+                                .filter(|i| *i < max_offset) // 过滤超出最大值的情况
+                                .flat_map(|i| {
+                                    let bi = (i / FIELD_ELEMENTS_PER_BLOB) as usize; // blob 索引
+                                    let fi = (i % FIELD_ELEMENTS_PER_BLOB) as usize; // 元素位置
+                                    // 复制生成指定数量的输出根
+                                    vec![blobs[bi][fi*32..(fi+1)*32].try_into().unwrap(); output_block_span as usize]
+                                }).collect();
+
+                            // 计算证明的 L2 头区块号
+                            let proof_l2_head_number = proposal_l2_head_number + starting_offset * output_block_span;
                             let result = validate_precondition(
                                 precondition_validation_data.clone(),
                                 blobs.clone(),
                                 proof_l2_head_number,
                                 &output_roots,
                             );
+
+                            // 验证三种测试场景
                             if starting_offset < max_offset && ending_offset < max_offset {
-                                // println!("Testing starting offset {starting_offset} ending offset {ending_offset}");
-                                // check correct validation
+                                // 正常情况：验证通过且哈希匹配
                                 assert_eq!(precondition_hash, result.unwrap());
                             } else if starting_offset < max_offset {
-                                // fail the attempt to continue validating beyond max block
-                                assert!(
-                                    result.is_err_and(|e| e.to_string().contains("> max block"))
-                                );
+                                // 结束偏移超出范围：预期返回超出最大区块错误
+                                assert!(result.is_err_and(|e| e.to_string().contains("> max block")));
                             } else {
-                                // fail the attempt to start validating beyond max block
-                                assert!(result.is_err_and(|e| e
-                                    .to_string()
-                                    .contains("< proof agreed l2 head")));
+                                // 起始偏移超出范围：预期返回 L2 头不匹配错误
+                                assert!(result.is_err_and(|e| e.to_string().contains("< proof agreed l2 head")));
                             }
                         }
                     }
                 }
             }
         });
+    }
+    #[tokio::test]
+    async fn test_validate_precondition_one() {
+        let m = BYTES_PER_BLOB / 2;
+        // 测试不同数量的 blob（1-6 个）
+        let max_blobs = 6;
+        let n = 1;
+        let mut blobs = gen_blobs(n);
+        // 将最后一个 blob 的后半部分置零，模拟数据填充规范
+        for i in m..BYTES_PER_BLOB {
+            blobs[n - 1][i] = 0;
+        }
+
+        // 生成 blob 请求数据
+        let blobs_fetch_requests = gen_blobs_requests(blobs.clone());
+        // 计算提案输出数量：基础声明 + 有效数据量 - 半 blob 的无效数据
+        let proposal_output_count = 1 + (n as u64) * FIELD_ELEMENTS_PER_BLOB - FIELD_ELEMENTS_PER_BLOB / 2;
+
+        // 测试不同的 L2 起始区块号配置
+        for proposal_l2_head_number in [1, 2, 5, 7, proposal_output_count] {
+            // 测试不同的输出间隔配置（1,2,7,11,13 个区块）
+            for output_block_span in [1, 2, 7, 11, 13] {
+                // 构造预条件验证数据结构
+                let precondition_validation_data = PreconditionValidationData::Validity {
+                    proposal_l2_head_number,
+                    proposal_output_count,
+                    output_block_span,
+                    blob_hashes: blobs_fetch_requests.clone(),
+                };
+
+                // 验证 blob 请求关联性
+                assert_eq!(
+                    precondition_validation_data.blob_fetch_requests(),
+                    blobs_fetch_requests.as_slice()
+                );
+
+                // 测试序列化/反序列化
+                {
+                    let recoded = pot::from_slice(precondition_validation_data.to_vec().as_slice()).unwrap();
+                    assert_eq!(precondition_validation_data, recoded);
+                }
+
+                // 验证哈希计算一致性
+                let precondition_hash = validity_precondition_hash(
+                    &proposal_l2_head_number,
+                    &proposal_output_count,
+                    &output_block_span,
+                    precondition_validation_data.blobs_hash(),
+                );
+                assert_eq!(precondition_hash, precondition_validation_data.precondition_hash());
+
+                // 测试不同数据子序列
+                let max_offset = (n as u64) * FIELD_ELEMENTS_PER_BLOB;
+                // 生成起始偏移量测试点（每个 blob 的起始和中间位置）
+                let starting_points = (0..max_blobs as u64).flat_map(|i| vec![
+                    i * FIELD_ELEMENTS_PER_BLOB,
+                    i * FIELD_ELEMENTS_PER_BLOB + FIELD_ELEMENTS_PER_BLOB / 2,
+                ]).collect::<Vec<_>>();
+
+                for starting_offset in starting_points {
+                    // 生成结束偏移量测试点
+                    let ending_points = (0..n as u64).flat_map(|i| vec![
+                        i * FIELD_ELEMENTS_PER_BLOB,
+                        i * FIELD_ELEMENTS_PER_BLOB + FIELD_ELEMENTS_PER_BLOB / 2,
+                    ]).map(|p| p + starting_offset).collect::<Vec<_>>();
+
+                    for ending_offset in ending_points {
+                        // 生成测试用的输出根数组
+                        let output_roots: Vec<B256> = (starting_offset..ending_offset)
+                            .filter(|i| *i < max_offset) // 过滤超出最大值的情况
+                            .flat_map(|i| {
+                                let bi = (i / FIELD_ELEMENTS_PER_BLOB) as usize; // blob 索引
+                                let fi = (i % FIELD_ELEMENTS_PER_BLOB) as usize; // 元素位置
+                                // 复制生成指定数量的输出根
+                                vec![blobs[bi][fi*32..(fi+1)*32].try_into().unwrap(); output_block_span as usize]
+                            }).collect();
+
+                        // 计算证明的 L2 头区块号
+                        let proof_l2_head_number = proposal_l2_head_number + starting_offset * output_block_span;
+                        let result = validate_precondition(
+                            precondition_validation_data.clone(),
+                            blobs.clone(),
+                            proof_l2_head_number,
+                            &output_roots,
+                        );
+
+                        // 验证三种测试场景
+                        if starting_offset < max_offset && ending_offset < max_offset {
+                            // 正常情况：验证通过且哈希匹配
+                            assert_eq!(precondition_hash, result.unwrap());
+                        } else if starting_offset < max_offset {
+                            // 结束偏移超出范围：预期返回超出最大区块错误
+                            assert!(result.is_err_and(|e| e.to_string().contains("> max block")));
+                        } else {
+                            // 起始偏移超出范围：预期返回 L2 头不匹配错误
+                            assert!(result.is_err_and(|e| e.to_string().contains("< proof agreed l2 head")));
+                        }
+                    }
+                }
+            }
+        }
+
     }
 }

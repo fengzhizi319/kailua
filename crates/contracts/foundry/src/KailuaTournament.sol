@@ -557,15 +557,15 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         } else {
             // Note: proposedOutputFe must be a canonical point or point eval precompile call will fail
             // Prove divergent output publication
-            / 对于中间输出，使用KZG证明验证其正确性
+            // 对于中间输出，使用KZG证明验证其正确性
             require(
-            childContract.verifyIntermediateOutput(
-            co[1], // 当前争议索引
-            proposedOutputFe,
-            blobCommitments[blobCommitments.length - 1], // 最后一个blob承诺
-            kzgProofs[kzgProofs.length - 1]              // 最后一个KZG证明
-            ),
-            "bad proposedOutput kzg"
+                childContract.verifyIntermediateOutput(
+                    co[1], // 当前争议索引
+                    proposedOutputFe,
+                    blobCommitments[blobCommitments.length - 1], // 最后一个blob承诺
+                    kzgProofs[kzgProofs.length - 1]              // 最后一个KZG证明
+                ),
+                "bad proposedOutput kzg"
             );
             // INVARIANT: Proofs can only show disparities
             if (KailuaKZGLib.hashToFe(computedOutputHash) == proposedOutputFe) {
@@ -610,17 +610,17 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
 
     /// @notice Proves that a proposal contains invalid intermediate data
     function proveNullFault(
-    // 支付奖励接收地址，奖励证明者
+        // 支付奖励接收地址，奖励证明者
         address payoutRecipient,
-    // [子提案索引, 尾部数据索引]
-    // 子提案索引：要挑战的子合约在children数组中的位置
-    // 尾部数据索引：必须 ≥ PROPOSAL_OUTPUT_COUNT，表示主输出之后的非法数据位置
+        // [子提案索引, 尾部数据索引]
+        // 子提案索引：要挑战的子合约在children数组中的位置
+        // 尾部数据索引：必须 ≥ PROPOSAL_OUTPUT_COUNT，表示主输出之后的非法数据位置
         uint64[2] calldata co,
-    // 错误的尾部字段元素（必须是非零的无效数据）
+        // 错误的尾部字段元素（必须是非零的无效数据）
         uint256 proposedOutputFe,
-    // 单个blob的KZG多项式承诺（用于验证非法数据的存在）
+        // 单个blob的KZG多项式承诺（用于验证非法数据的存在）
         bytes calldata blobCommitment,
-    // 对应承诺的KZG证明（通过预编译合约验证）
+        // 对应承诺的KZG证明（通过预编译合约验证）
         bytes calldata kzgProof
     ) external {
         // 获取要挑战的子合约实例
@@ -659,7 +659,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         // 验证4：非法数据必须出现在最后一个blob中
         // PROPOSAL_BLOBS-1 表示最后一个blob的索引
         if (KailuaKZGLib.blobIndex(feOffset) >= PROPOSAL_BLOBS) {
-        revert InvalidDataRemainder();// 防止在非尾部blob添加非法数据
+            revert InvalidDataRemainder();// 防止在非尾部blob添加非法数据
         }
 
         // Validate the claimed output root publications
@@ -667,8 +667,8 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         // 核心验证：通过预编译合约验证KZG证明
         // 验证proposedOutputFe确实存在于承诺的blob中
         require(
-        childContract.verifyIntermediateOutput(feOffset, proposedOutputFe, blobCommitment, kzgProof),
-        "bad proposedOutput kzg"
+            childContract.verifyIntermediateOutput(feOffset, proposedOutputFe, blobCommitment, kzgProof),
+            "bad proposedOutput kzg"
         );
 
         // Update dispute status based on trailing data
