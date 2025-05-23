@@ -114,9 +114,9 @@ where
 
         // The claimed L2 block number must be greater than or equal to the L2 safe head.
         // Fetch the safe head's block header.
-	////////////////////////// 安全头验证 //////////////////////////
+	    ////////////////////////// 安全头验证 //////////////////////////
         client::log("SAFE HEAD");
-	// 获取开始的block的前一个block 的header，从而可以求出开始的block的number
+	    // 获取开始的block的前一个block 的header，从而可以求出开始的block的number
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
