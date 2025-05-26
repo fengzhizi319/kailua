@@ -588,7 +588,7 @@ pub mod tests {
         stitched_executions: Vec<Vec<Execution>>,
         stitched_boot_info: Vec<StitchedBootInfo>,
     ) -> ProofJournal {
-        let oracle = Arc::new(TestOracle::new(boot_info.clone()));
+        let oracle = Arc::new(TestOracle::new(boot_info.clone()));//根据boot_info创建测试oracle,包含存储等
         let precondition_validation_data_hash = match precondition_validation_data {
             None => B256::ZERO,
             Some(data) => oracle.add_precondition_data(data),
