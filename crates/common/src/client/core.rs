@@ -103,7 +103,7 @@ where
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         client::log("SAFE HEAD HASH");
-	// 获取L2安全头的区块哈希（基于达成共识的输出根，即前一个块的header）
+	    // 获取L2安全头的区块哈希（基于达成共识的输出根，即前一个块的header）
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
@@ -114,9 +114,9 @@ where
 
         // The claimed L2 block number must be greater than or equal to the L2 safe head.
         // Fetch the safe head's block header.
-	////////////////////////// 安全头验证 //////////////////////////
+	    ////////////////////////// 安全头验证 //////////////////////////
         client::log("SAFE HEAD");
-	// 获取开始的block的前一个block 的header，从而可以求出开始的block的number
+	    // 获取开始的block的前一个block 的header，从而可以求出开始的block的number
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
