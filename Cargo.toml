@@ -110,15 +110,10 @@ risc0-build = { version = "2.1.1", features = ["unstable"] }
 risc0-zkvm = { version = "2.0.2", features = ["heap-embedded-alloc", "unstable"] }
 
 [profile.dev]
-#opt-level = 3
-opt-level = 0  # Disable optimizations for debug builds
-debug = 2      # Include full debug information
+opt-level = 3
 
-[profile.test]
-opt-level = 0  # Also disable optimizations for test builds
 
 [profile.release]
-opt-level = 3
 codegen-units = 1
 debug = 1
 lto = "fat"
@@ -126,6 +121,3 @@ lto = "fat"
 [profile.release.build-override]
 codegen-units = 1
 opt-level = 3
-
-[profile.dev.build-override]
-debug = true  # 为构建依赖启用调试信息

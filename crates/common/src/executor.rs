@@ -167,34 +167,48 @@ impl<E: Executor + Send + Sync + Debug> Executor for CachedExecutor<E> {
     ///   - `compute_output_root` fails to calculate the agreed output root.
     ///   - Matching cached attributes comparison (or unwrap) fails.
     ///   - Payload execution via `self.executor` encounters an issue.
+    /// 执行指定的 payload，并根据缓存和收集目标优化执行流程。
     async fn execute_payload(
         &mut self,
         attributes: OpPayloadAttributes,
     ) -> Result<BlockBuildingOutcome, Self::Error> {
+        // 1. 计算当前的 agreed_output（执行前状态根）
         let agreed_output = self.compute_output_root()?;
+
+        // 2. 检查缓存是否命中（agreed_output 和 attributes 都相等）
         if self
             .cache
             .last()
             .map(|e| Ok(agreed_output == e.agreed_output && attributes == e.attributes))
             .unwrap_or(Ok(false))?
         {
+            // 命中缓存，弹出缓存中的 Execution
             let artifacts = self.cache.pop().unwrap().artifacts.clone();
+            // 记录缓存命中日志
             log(&format!("CACHE {}", artifacts.header.number));
+            // 更新 safe head
             self.update_safe_head(artifacts.header.clone());
+            // 返回缓存中的执行结果
             return Ok(artifacts);
         }
+
+        // 3. 如果没有命中缓存但有收集目标，执行并收集结果
         if let Some(collection_target) = &self.collection_target {
+            // 调用底层 executor 执行
             let artifacts = self.executor.execute_payload(attributes.clone()).await?;
+            // 加锁并收集 Execution 记录
             let mut collection_target = collection_target.lock().unwrap();
-            // 当执行成功后会自动收集到 collection_target
             collection_target.push(Execution {
                 agreed_output,
                 attributes,
                 artifacts: artifacts.clone(),
-                claimed_output: Default::default(),
+                claimed_output: Default::default(), // claimed_output 先填默认值
             });
+            // 返回执行结果
             return Ok(artifacts);
         }
+
+        // 4. 既不命中缓存也没有收集目标，直接调用底层 executor
         self.executor.execute_payload(attributes).await
     }
 

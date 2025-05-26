@@ -100,10 +100,11 @@ where
         let boot = BootInfo::load(oracle.as_ref())
             .await
             .context("BootInfo::load")?;
+        println!("BootInfo.l1_head: {:#?}", boot.l1_head);
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         client::log("SAFE HEAD HASH");
-	    // 获取L2安全头的区块哈希（基于达成共识的输出根，即前一个块的header）
+        // 获取L2安全头的区块哈希（基于达成共识的输出根，即前一个块的header）
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
@@ -114,9 +115,9 @@ where
 
         // The claimed L2 block number must be greater than or equal to the L2 safe head.
         // Fetch the safe head's block header.
-	    ////////////////////////// 安全头验证 //////////////////////////
+        ////////////////////////// 安全头验证 //////////////////////////
         client::log("SAFE HEAD");
-	    // 获取开始的block的前一个block 的header，从而可以求出开始的block的number
+        // 获取开始的block的前一个block 的header，从而可以求出开始的block的number
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
@@ -201,7 +202,7 @@ where
         ////////////////////////////////////////////////////////////////
         //                   DERIVATION & EXECUTION                   //
         ////////////////////////////////////////////////////////////////
-	//////////////////////// 需要关注L1与L2 ////////////////////////
+        //////////////////////// 需要关注L1与L2 ////////////////////////
         client::log("PRECONDITION");
         // L2提案这笔交易在L1上的blob的检索信息以及完整的blob数据
         let precondition_data = precondition::load_precondition_data(
@@ -209,20 +210,20 @@ where
             oracle.clone(),
             &mut beacon,
         )
-        .await
-        .context("load_precondition_data")?;
+            .await
+            .context("load_precondition_data")?;
 
         client::log("DERIVATION & EXECUTION");
         // Create a new derivation driver with the given boot information and oracle.
-// 创建管道游标（连接L1/L2数据）
+        // 创建管道游标（连接L1/L2数据）
         let cursor = new_oracle_pipeline_cursor(
             rollup_config.as_ref(),
             safe_head,
             &mut l1_provider,
             &mut l2_provider,
         )
-        .await
-        .context("new_oracle_pipeline_cursor")?;
+            .await
+            .context("new_oracle_pipeline_cursor")?;
         l2_provider.set_cursor(cursor.clone());
 
         let da_provider =
@@ -235,9 +236,9 @@ where
             l1_provider.clone(),
             l2_provider.clone(),
         )
-        .await
-        .context("OraclePipeline::new")?;
-	// 构建带缓存的执行器管道
+            .await
+            .context("OraclePipeline::new")?;
+        // 构建带缓存的执行器管道
         let cached_executor = CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
@@ -273,6 +274,8 @@ where
                 .advance_to_target(&boot.rollup_config, Some(starting_block + 1))
                 .await
                 .context("advance_to_target")?;
+            //println!(output_root)
+            println!("output_root: {:?}", output_root);
             // Stop if nothing new was derived
             // 检查是否产生新区块（无新区块时终止推导）
             if output_block.block_info.number == starting_block {
@@ -311,7 +314,7 @@ where
             .context("validate_precondition")?;
 
         // 根据输出结果数量返回不同状态
-	if output_roots.len() != expected_output_count {
+        if output_roots.len() != expected_output_count {
             // Not enough data to derive output root at claimed height
             Ok((boot, precondition_hash, None))
         } else if output_roots.is_empty() {
@@ -425,7 +428,7 @@ pub mod tests {
             vec![],
             Some(collection_target.clone()),
         )
-        .context("run_core_client")?;
+            .context("run_core_client")?;
 
         assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
         assert_eq!(
@@ -467,7 +470,7 @@ pub mod tests {
             execution_cache,
             None,
         )
-        .expect("run_core_client");
+            .expect("run_core_client");
 
         assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
         assert_eq!(
@@ -507,7 +510,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -529,7 +532,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
         let _ = test_execution(
             BootInfo {
                 l1_head: B256::ZERO,
@@ -545,7 +548,7 @@ pub mod tests {
             },
             executions,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -572,7 +575,50 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
-        .unwrap();
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_execution() {
+        let executions = test_derivation(
+            BootInfo {
+                l1_head: b256!(
+                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
+                ),
+                agreed_l2_output_root: b256!(
+                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                ),
+                claimed_l2_block_number: 16491349,
+                chain_id: 11155420,
+                rollup_config: Default::default(),
+            },
+            Some(PreconditionValidationData::Validity {
+                proposal_l2_head_number: 16491249,
+                proposal_output_count: 1,
+                output_block_span: 100,
+                blob_hashes: vec![],
+            }),
+        )
+            .unwrap();
+        let _ = test_execution(
+            BootInfo {
+                l1_head: B256::ZERO,
+                agreed_l2_output_root: b256!(
+                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                ),
+                claimed_l2_block_number: 16491349,
+                chain_id: 11155420,
+                rollup_config: Default::default(),
+            },
+            executions,
+        )
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -593,7 +639,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -615,7 +661,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap_err();
+            .unwrap_err();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -637,7 +683,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
         assert!(executions.is_empty());
     }
 }
