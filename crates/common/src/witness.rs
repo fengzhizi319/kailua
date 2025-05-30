@@ -108,6 +108,7 @@ pub mod tests {
         let (witness, values) = create_test_witness();
         // test serde
         {
+            //先将 witness 对象序列化为字节数组，再将字节数组反序列化还原为 Witness<VecOracle> 类型的对象。
             let recoded = rkyv::from_bytes::<Witness<VecOracle>, rkyv::rancor::Error>(
                 &rkyv::to_bytes::<rkyv::rancor::Error>(&witness).unwrap(),
             )

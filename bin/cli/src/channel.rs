@@ -25,17 +25,31 @@ pub struct DuplexChannel<T> {
 
 impl<T> DuplexChannel<T> {
     /// Returns a pair of duplex channel instances, one for each endpoint
+    /// 创建一对互联的双向通道
+    /// channel_0.sender  --> pair_0 --> channel_1.receiver
+    ///channel_1.sender  --> pair_1 --> channel_0.receiver
     pub fn new_pair(buffer: usize) -> (Self, Self) {
-        let pair_0 = channel(buffer);
-        let pair_1 = channel(buffer);
+        // 创建两个独立的MPSC通道对
+        let pair_0 = channel(buffer); // (sender0, receiver0)
+        let pair_1 = channel(buffer); // (sender1, receiver1)
+        
+        // 构建第一个通道端点：
+        // - 发送使用pair0的发送端
+        // - 接收使用pair1的接收端
         let channel_0 = Self {
-            receiver: pair_1.1,
-            sender: pair_0.0,
+            receiver: pair_1.1,  // 接收来自channel_1的消息
+            sender: pair_0.0,    // 发送到channel_1的接收端
         };
+        
+        // 构建第二个通道端点：
+        // - 发送使用pair1的发送端 
+        // - 接收使用pair0的接收端
         let channel_1 = Self {
-            receiver: pair_0.1,
-            sender: pair_1.0,
+            receiver: pair_0.1,  // 接收来自channel_0的消息
+            sender: pair_1.0,    // 发送到channel_0的接收端
         };
+        
         (channel_0, channel_1)
     }
+
 }

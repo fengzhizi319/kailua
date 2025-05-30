@@ -22,20 +22,35 @@ use serde::{Deserialize, Serialize};
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ProofJournal {
     /// The recipient address for the proof payout
+    /// 收益接收地址（用于激励分配的以太坊地址）
     pub payout_recipient: Address,
+
     /// The hash of the precondition for validating this proof
+    /// 预条件哈希（包含执行前必须满足的状态约束）
     pub precondition_hash: B256,
+
     /// The L1 head hash containing the safe L2 chain data that may reproduce the L2 head hash.
+    /// L1链头哈希（锚定L2链数据有效性的基准点）
     pub l1_head: B256,
+
     /// The latest finalized L2 output root.
+    /// 最新确认的L2状态根（已达成共识的输出状态）
     pub agreed_l2_output_root: B256,
+
     /// The L2 output root claim.
+    /// 声明的L2状态根（当前证明主张的新输出状态）
     pub claimed_l2_output_root: B256,
+
     /// The L2 claim block number.
+    /// L2声明区块号（对应状态根的区块高度）
     pub claimed_l2_block_number: u64,
+
     /// The configuration hash.
+    /// 配置哈希（Rollup参数的密码学承诺）
     pub config_hash: B256,
+
     /// The FPVM image id
+    /// FPVM镜像ID（零知识证明系统的可执行标识）
     pub fpvm_image_id: B256,
 }
 

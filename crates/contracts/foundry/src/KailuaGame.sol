@@ -216,22 +216,32 @@ contract KailuaGame is KailuaTournament {
 
     /// @inheritdoc KailuaTournament
     function verifyIntermediateOutput(
-        uint64 outputNumber,
-        uint256 outputFe,
-        bytes calldata blobCommitment,
-        bytes calldata kzgProof
+        uint64 outputNumber,      // 要验证的输出序号（对应特定L2区块）
+        uint256 outputFe,         // 声明的字段元素值（需验证的数值）
+        bytes calldata blobCommitment, // KZG多项式承诺（对应数据块）
+        bytes calldata kzgProof       // KZG证明（用于验证字段元素）
     ) external override returns (bool success) {
+        // 步骤1：计算目标数据块索引（将输出序号映射到特定blob）
         uint256 blobIndex = KailuaKZGLib.blobIndex(outputNumber);
+
+        // 步骤2：计算字段元素在blob中的位置（4096个字段元素/blob）
         uint32 blobPosition = KailuaKZGLib.fieldElementIndex(outputNumber);
+
+        // 步骤3：生成版本化KZG哈希（包含版本字节的承诺哈希）
         bytes32 proposalBlobHash = KailuaKZGLib.versionedKZGHash(blobCommitment);
         // Note: Only known blobs can be used to validate an intermediate output
         if (proposalBlobHash != proposalBlobHashes[blobIndex].raw()) {
             success = false;
         } else {
-            success =
-                KailuaKZGLib.verifyKZGBlobProof(proposalBlobHash, blobPosition, outputFe, blobCommitment, kzgProof);
+	// 步骤4：执行KZG证明验证（核心数学验证）
+            success = KailuaKZGLib.verifyKZGBlobProof(
+                proposalBlobHash,    // 已存储的承诺哈希
+                blobPosition,        // 字段元素位置
+                outputFe,            // 需验证的数值
+                blobCommitment,      // 多项式承诺
+                kzgProof             // 评估证明
+            );
         }
-    }
 
     /// @inheritdoc KailuaTournament
     function getChallengerDuration(uint256 asOfTimestamp) public view override returns (Duration duration_) {

@@ -117,23 +117,25 @@ pub mod tests {
 
     impl TestOracle<TestKeyValueStore> {
         pub fn new(boot_info: BootInfo) -> Self {
-            // Create memory store
+            // 创建内存存储（SingleChainLocalInputs），用于模拟链的本地输入
             let scli = SingleChainLocalInputs::new(SingleChainHost {
                 l1_head: boot_info.l1_head,
                 agreed_l2_output_root: boot_info.agreed_l2_output_root,
                 claimed_l2_output_root: boot_info.claimed_l2_output_root,
                 claimed_l2_block_number: boot_info.claimed_l2_block_number,
                 l2_chain_id: Some(boot_info.chain_id),
-                // rollup_config_path: None, // no support for custom chains
+                // rollup_config_path: None, // 不支持自定义链
                 ..Default::default()
             });
-            // Create a cloned disk store in a temp dir
+            // 在临时目录下创建一份 testdata 的磁盘存储副本
             let temp_dir = tempdir().unwrap();
             let dest = temp_dir.path().join("testdata");
             copy_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata"), &dest).unwrap();
             let disk = DiskKeyValueStore::new(dest);
+            // 组合内存和磁盘存储为 SplitKeyValueStore，并用 Arc<RwLock> 包裹以支持多线程访问
             let kv = Arc::new(RwLock::new(SplitKeyValueStore::new(scli, disk)));
 
+            // 返回 TestOracle 实例，包含 kv、backend 和临时目录句柄
             Self {
                 kv: kv.clone(),
                 backend: OfflineHostBackend::new(kv.clone()),
@@ -141,15 +143,22 @@ pub mod tests {
             }
         }
 
+        /// 将前置条件数据写入预言机存储，并返回其哈希值
         pub fn add_precondition_data(&self, data: PreconditionValidationData) -> B256 {
+            // 在阻塞线程中执行写操作，避免异步上下文阻塞
             block_in_place(move || {
+                // 获取底层存储的可写锁
                 let mut kv = self.kv.blocking_write();
+                // 计算前置条件数据的哈希
                 let precondition_data_hash = data.hash();
+                // 构造预镜像键（以哈希和类型为参数）
                 let preimage_key =
                     PreimageKey::new(precondition_data_hash.0, PreimageKeyType::Sha256);
+                // 将数据写入存储
                 kv.set(B256::from(preimage_key), data.to_vec()).unwrap();
-                // sanity check
+                // 写入后做一次校验，确保数据一致
                 assert_eq!(kv.get(B256::from(preimage_key)).unwrap(), data.to_vec());
+                // 返回数据哈希
                 precondition_data_hash
             })
         }

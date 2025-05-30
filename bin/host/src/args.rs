@@ -15,6 +15,7 @@
 use alloy_primitives::B256;
 use clap::{ArgAction, Parser};
 use kailua_client::args::parse_b256;
+use kailua_client::boundless::BoundlessArgs;
 use kailua_client::proving::ProvingArgs;
 use kailua_client::telemetry::TelemetryArgs;
 use std::cmp::Ordering;
@@ -37,14 +38,21 @@ pub struct KailuaHostArgs {
 
     #[clap(flatten)]
     pub proving: ProvingArgs,
+    #[clap(flatten)]
+    pub boundless: BoundlessArgs,
     #[clap(long, env, default_value_t = false)]
     pub bypass_chain_registry: bool,
 
     #[clap(long, env, value_delimiter = ',')]
+    ///precondition_params[0], 全局起始区块号（L2链的共识起点）
+    ///precondition_params[1], 提案输出总数（预期验证的区块数量）
+    /// precondition_params[2], 输出间隔（验证检查点的区块间隔）
     pub precondition_params: Vec<u64>,
     #[clap(long, env, value_parser = parse_b256, value_delimiter = ',')]
+    ///l2提案被打包的l1的块的block hash
     pub precondition_block_hashes: Vec<B256>,
     #[clap(long, env, value_parser = parse_b256, value_delimiter = ',')]
+    /// l2提案对应的交易，作为l1的一笔交易，其blob的hash，blob可能保存着中间区块的执行trace
     pub precondition_blob_hashes: Vec<B256>,
 
     #[clap(flatten)]
@@ -52,7 +60,7 @@ pub struct KailuaHostArgs {
 
     /// Verbosity level (0-2)
     #[arg(long, short, action = ArgAction::Count)]
-    pub v: u8,
+    pub v: u8,///用于指定日志的详细程度，范围是 0 到 2。
 }
 
 impl PartialEq<Self> for KailuaHostArgs {

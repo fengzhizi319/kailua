@@ -32,6 +32,7 @@ use std::fmt::Debug;
 /// - `false` if the `key_type` is either `PreimageKeyType::Local` or `PreimageKeyType::GlobalGeneric`,
 ///   as these types do not require validation.
 pub fn needs_validation(key_type: &PreimageKeyType) -> bool {
+    // 如果 key_type 不是 Local 或 GlobalGeneric，则需要验证，返回 true；否则返回 false
     !matches!(
         key_type,
         PreimageKeyType::Local | PreimageKeyType::GlobalGeneric
@@ -75,26 +76,35 @@ pub fn needs_validation(key_type: &PreimageKeyType) -> bool {
 ///   blob key types should not be loaded.
 ///
 pub fn validate_preimage(key: &PreimageKey, value: &[u8]) -> PreimageOracleResult<()> {
+    // 获取 key 的类型
     let key_type = key.key_type();
+    // 根据 key 类型选择相应的哈希算法，计算 value 的哈希值
     let image = match key_type {
+        // Keccak256 类型，使用 keccak256 哈希
         PreimageKeyType::Keccak256 => Some(keccak256(value).0),
+        // Sha256 类型，使用 SHA2 哈希
         PreimageKeyType::Sha256 => {
             let x = SHA2::hash_bytes(value);
             Some(x.as_bytes().try_into().unwrap())
         }
+        // Precompile 类型暂不支持，直接报错
         PreimageKeyType::Precompile => {
             unimplemented!("Precompile acceleration is not yet supported.");
         }
+        // Blob 类型不应被加载，直接 panic
         PreimageKeyType::Blob => {
             unreachable!("Blob key types should not be loaded.");
         }
+        // Local 和 GlobalGeneric 类型无需校验哈希，直接跳过
         PreimageKeyType::Local | PreimageKeyType::GlobalGeneric => None,
     };
+    // 如果需要校验哈希，则比较 key 是否与计算出的哈希一致
     if let Some(image) = image {
         if key != &PreimageKey::new(image, key_type) {
             return Err(PreimageOracleError::InvalidPreimageKey);
         }
     }
+    // 校验通过
     Ok(())
 }
 

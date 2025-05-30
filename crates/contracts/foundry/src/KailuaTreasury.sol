@@ -30,10 +30,10 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
     // ------------------------------
 
     /// @notice The initial root claim for the deployment
-    Claim public immutable ROOT_CLAIM;
+    Claim public immutable ROOT_CLAIM;// 部署时初始化的根声明（如：0xabcd1234...）
 
-    /// @notice The L2 block number of the initial root claim for the deployment
-    uint64 public immutable L2_BLOCK_NUMBER;
+    /// @notice The initial root claim for the deployment
+    uint64 public immutable L2_BLOCK_NUMBER;// 初始化L2区块号（如：123456）
 
     constructor(
         IRiscZeroVerifier _verifierContract,
@@ -175,30 +175,39 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
 
     /// @inheritdoc IKailuaTreasury
     function eliminate(address _child, address prover) external {
+        //1. 调用者验证
         KailuaTournament child = KailuaTournament(_child);
 
         // INVARIANT: Only the child's parent may call this
         KailuaTournament parent = child.parentGame();
+        // 仅允许父合约调用
         if (msg.sender != address(parent)) {
             revert Blacklisted(msg.sender, address(parent));
         }
 
+        // 2. 提案者存在性验证
         // INVARIANT: Only known proposals may be eliminated
-        address eliminated = proposerOf[address(child)];
+        address eliminated = proposerOf[address(child)];// 通过映射获取原始提议者
+        // 拦截未注册提案
         if (eliminated == address(0x0)) {
             revert NotProposed();
         }
 
+        // 3. 防重复淘汰验证
         // INVARIANT: Cannot double-eliminate players
         if (eliminationRound[eliminated] > 0) {
             revert AlreadyEliminated();
         }
 
+        // 4. 记录淘汰状态
         // Record elimination round
-        eliminationRound[eliminated] = child.gameIndex();
+        eliminationRound[eliminated] = child.gameIndex();// 记录淘汰轮次
 
+        // 5. 分配奖励
+        //eliminations[Bob] = [Alice, Eve]  // Bob淘汰了Alice和Eve的提案
+        //eliminations[Dave] = [Charlie]    // Dave淘汰了Charlie
         // Allocate bond to prover
-        eliminations[prover].push(eliminated);
+        eliminations[prover].push(eliminated);//分配奖励资格
     }
 
     /// @inheritdoc IKailuaTreasury
@@ -320,30 +329,37 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
         returns (KailuaTournament tournament)
     {
         // Check proposer honesty
+        // [1] 身份验证，检查提议者是否已被淘汰，即是否在黑名单中
         if (eliminationRound[msg.sender] > 0) {
             revert BadAuth();
         }
         // Update proposer bond
+        // [2] 保证金处理，更新质押金：将发送的ETH累加到用户的质押账户
         if (msg.value > 0) {
-            paidBonds[msg.sender] += msg.value;
+            paidBonds[msg.sender] += msg.value;// 累加保证金
         }
         // Check proposer bond
+        // 检查保证金门槛
         if (paidBonds[msg.sender] < participationBond) {
             revert IncorrectBondAmount();
         }
         // Create proposal
+        // [3] 创建proposal提案KailuaTournament实例
         isProposing = true;
         tournament = KailuaTournament(address(DISPUTE_GAME_FACTORY.create(GAME_TYPE, _rootClaim, _extraData)));
         isProposing = false;
         // Check proposal progression
+        // [4] 提案连续性检查：检查新提案是否能继承上一个提案，检查连续提案的区块号递增性
         KailuaTournament previousGame = lastProposal[msg.sender];
         if (address(previousGame) != address(0x0)) {
             // INVARIANT: Proposers may only extend the proposal set incrementally
+            // 确保新提案的L2区块号必须大于上次提案
             if (previousGame.l2BlockNumber() >= tournament.l2BlockNumber()) {
                 revert BlockNumberMismatch(previousGame.l2BlockNumber(), tournament.l2BlockNumber());
             }
         }
         // Check whether the proposer must follow a vanguard if one is set
+        // [5] Vanguard先锋机制验证，非先锋成员需等待优势期结束
         if (vanguard != address(0x0) && vanguard != msg.sender) {
             // The proposer may only counter the vanguard during the advantage time
             KailuaTournament proposalParent = tournament.parentGame();
@@ -356,6 +372,7 @@ contract KailuaTreasury is KailuaTournament, IKailuaTreasury {
             }
         }
         // Record proposer
+        // [6] 记录提案关系：记录提案者和提案的映射关系
         proposerOf[address(tournament)] = msg.sender;
         // Record proposal
         lastProposal[msg.sender] = tournament;

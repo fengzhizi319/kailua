@@ -86,6 +86,10 @@ pub fn create_proving_args(
             blob_hashes.join(","),
         ]);
     }
+    // boundless args
+    if let Some(market) = &args.boundless.market {
+        proving_args.extend(market.to_arg_vec(&args.boundless.storage));
+    }
     // data directory
     let data_dir = data_dir.join(format!(
         "{}-{}",

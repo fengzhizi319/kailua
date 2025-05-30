@@ -100,33 +100,40 @@ where
         let boot = BootInfo::load(oracle.as_ref())
             .await
             .context("BootInfo::load")?;
+        println!("BootInfo.l1_head: {:#?}", boot.l1_head);
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         client::log("SAFE HEAD HASH");
+        // 获取L2安全头的区块哈希（基于达成共识的输出根，即前一个块的header）
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
+        // 初始化L1/L2链数据提供者
         let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, stream).await?;
         let mut l2_provider =
             OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
 
         // The claimed L2 block number must be greater than or equal to the L2 safe head.
         // Fetch the safe head's block header.
+        ////////////////////////// 安全头验证 //////////////////////////
         client::log("SAFE HEAD");
+        // 获取开始的block的前一个block 的header，从而可以求出开始的block的number
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
 
+        // 验证声明的L2区块号不小于安全头区块号
         if boot.claimed_l2_block_number < safe_head.number {
-            bail!("Invalid claim");
+            bail!("Invalid claim"); // 关键断言失败直接终止
         }
         let safe_head_number = safe_head.number;
+        //求出一共有多少个block需要执行
         let expected_output_count = (boot.claimed_l2_block_number - safe_head_number) as usize;
 
-        ////////////////////////////////////////////////////////////////
+        ////////////////////////////// 纯执行模式处理，无需关注L1,EXECUTION CACHING     ////////////////////////////////////
         //                     EXECUTION CACHING                      //
         ////////////////////////////////////////////////////////////////
-        if boot.l1_head.is_zero() {
+        if boot.l1_head.is_zero() {// 当L1头为空时进入纯执行模式
             client::log("EXECUTION ONLY");
             let cursor =
                 new_execution_cursor(rollup_config.as_ref(), safe_head.clone(), &mut l2_provider)
@@ -134,6 +141,7 @@ where
                     .context("new_execution_cursor")?;
             l2_provider.set_cursor(cursor.clone());
 
+            // 初始化Kona执行器（包含状态机）
             let mut kona_executor = KonaExecutor::new(
                 rollup_config.as_ref(),
                 l2_provider.clone(),
@@ -160,7 +168,9 @@ where
 
             let mut latest_output_root = boot.agreed_l2_output_root;
             // Validate executed chain
+            // 遍历执行每个block，验证每个block的执行结果是否正确
             for execution in execution_cache {
+                // 三重状态验证：初始状态 -> 执行转换 -> 最终状态
                 // Verify initial state
                 assert_eq!(execution.agreed_output, latest_output_root);
                 // Verify transition
@@ -203,14 +213,15 @@ where
 
         client::log("DERIVATION & EXECUTION");
         // Create a new derivation driver with the given boot information and oracle.
+        // 创建管道游标（连接L1/L2数据）
         let cursor = new_oracle_pipeline_cursor(
             rollup_config.as_ref(),
             safe_head,
             &mut l1_provider,
             &mut l2_provider,
         )
-        .await
-        .context("new_oracle_pipeline_cursor")?;
+            .await
+            .context("new_oracle_pipeline_cursor")?;
         l2_provider.set_cursor(cursor.clone());
 
         let da_provider =
@@ -223,11 +234,13 @@ where
             l1_provider.clone(),
             l2_provider.clone(),
         )
-        .await
-        .context("OraclePipeline::new")?;
+            .await
+            .context("OraclePipeline::new")?;
+        // 构建带缓存的执行器管道
         let cached_executor = CachedExecutor {
             cache: {
                 // The cache elements will be popped from first to last
+                // 倒序缓存
                 let mut cache = execution_cache;
                 cache.reverse();
                 cache
@@ -245,26 +258,39 @@ where
 
         // Run the derivation pipeline until we are able to produce the output root of the claimed
         // L2 block.
+        // 推进到目标区块并收集输出根
+        // 初始化输出根集合（预分配内存提升性能）
         let mut output_roots = Vec::with_capacity(expected_output_count);
+
+        // 遍历从安全头到目标区块的所有区块号
         for starting_block in safe_head_number..boot.claimed_l2_block_number {
             // Advance to the next target
+            // 驱动链状态推进到指定区块（异步操作），并保存执行结果到collection_target中。
+            // - &boot.rollup_config: 当前rollup链配置
+            // - Some(starting_block + 1): 目标区块号（当前+1）
             let (output_block, output_root) = driver
                 .advance_to_target(&boot.rollup_config, Some(starting_block + 1))
                 .await
                 .context("advance_to_target")?;
+            //println!(output_root)
+            //println!("output_root: {:?}", output_root);
             // Stop if nothing new was derived
+            // 检查是否产生新区块（无新区块时终止推导）
             if output_block.block_info.number == starting_block {
                 // A mismatch indicates that there is insufficient L1 data available to produce
                 // an L2 output root at the claimed block number
                 client::log("HALT");
                 break;
             } else {
+                // 记录执行进度（当前区块/总目标区块）
                 client::log(&format!(
                     "OUTPUT: {}/{}",
                     output_block.block_info.number, boot.claimed_l2_block_number
                 ));
             }
             // Append newly computed output root
+            // 收集输出状态根（用于后续验证）
+            // output_root包含：状态树根、收据根、区块哈希的哈希组合
             output_roots.push(output_root);
         }
 
@@ -272,7 +298,7 @@ where
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
         client::log("EPILOGUE");
-
+        // 如果验证正确，那么返回precondition_validation_data的hash，主要是blob检索信息的hash
         let precondition_hash = precondition_data
             .map(|(precondition_validation_data, blobs)| {
                 precondition::validate_precondition(
@@ -285,6 +311,7 @@ where
             .unwrap_or(Ok(B256::ZERO))
             .context("validate_precondition")?;
 
+        // 根据输出结果数量返回不同状态
         if output_roots.len() != expected_output_count {
             // Not enough data to derive output root at claimed height
             Ok((boot, precondition_hash, None))
@@ -302,39 +329,52 @@ where
     // Check claimed_l2_output_root correctness
     if let Some(computed_output) = output_hash {
         // With sufficient data, the input l2_claim must be true
-        assert_eq!(boot.claimed_l2_output_root, computed_output);
+        assert_eq!(boot.claimed_l2_output_root, computed_output);// 验证实际输出与声明一致
     } else {
         // We use the zero claim hash to denote that the data as of l1 head is insufficient
-        assert_eq!(boot.claimed_l2_output_root, B256::ZERO);
+        assert_eq!(boot.claimed_l2_output_root, B256::ZERO);// 无输出时校验零值
     }
 
     Ok((boot, precondition_hash))
 }
 
+
+///获取agreed_l2_output_root对应的L2 header的hash
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [BootInfo].
 pub async fn fetch_safe_head_hash<O>(
-    caching_oracle: &O,
-    agreed_l2_output_root: B256,
+    caching_oracle: &O,          // 带缓存的预映像预言机（实现CommsClient协议）
+    agreed_l2_output_root: B256, // 达成共识的L2输出根（来自BootInfo）
 ) -> Result<B256, OracleProviderError>
 where
     O: CommsClient,
 {
+    // 初始化128字节缓冲区（根据Kona协议规范，L2输出根预映像需要128字节）
     let mut output_preimage = [0u8; 128];
+
+    // 发送StartingL2Output类型的提示，通知预言机需要获取L2起始输出的预映像数据
+    // 协议格式：HintType(1字节) + agreed_l2_output_root(32字节)
     HintType::StartingL2Output
         .with_data(&[agreed_l2_output_root.as_ref()])
         .send(caching_oracle)
         .await?;
+
+    // 获取完整的预映像数据（Keccak256哈希对应的原始数据）
+    // 根据Kona预映像规范，预映像键由哈希类型和哈希值组成
     caching_oracle
         .get_exact(
-            PreimageKey::new_keccak256(*agreed_l2_output_root),
-            output_preimage.as_mut(),
+            PreimageKey::new_keccak256(*agreed_l2_output_root), // 构造Keccak256类型的预映像键
+            output_preimage.as_mut(), // 写入预分配的128字节缓冲区
         )
         .await?;
 
+    // 解析预映像数据中的安全头哈希（协议规定位于最后32字节位置）
+    // 数据结构布局：
+    // [0..96] - 保留字段（包含状态根、收据根等）
+    // [96..128] - 安全头哈希（B256类型）
     output_preimage[96..128]
-        .try_into()
-        .map_err(OracleProviderError::SliceConversion)
+        .try_into() // 将[u8;32]转换为B256
+        .map_err(OracleProviderError::SliceConversion) // 处理可能的转换错误
 }
 
 /// Recovers a continuous execution trace from the collection target
@@ -534,6 +574,50 @@ pub mod tests {
             }),
         )
         .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_sepolia_16491249_16491349_execution() {
+        let executions = test_derivation(
+            BootInfo {
+                l1_head: b256!(
+                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
+                ),
+                agreed_l2_output_root: b256!(
+                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                ),
+                claimed_l2_block_number: 16491349,
+                chain_id: 11155420,
+                rollup_config: Default::default(),
+            },
+            Some(PreconditionValidationData::Validity {
+                proposal_l2_head_number: 16491249,
+                proposal_output_count: 1,
+                output_block_span: 100,
+                blob_hashes: vec![],
+            }),
+        )
+            .unwrap();
+        let precondition_hash = test_execution(
+            BootInfo {
+                l1_head: B256::ZERO,
+                agreed_l2_output_root: b256!(
+                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                ),
+                claimed_l2_block_number: 16491349,
+                chain_id: 11155420,
+                rollup_config: Default::default(),
+            },
+            executions,
+        )
+            .unwrap();
+        println!("precondition_hash:{:#?}", precondition_hash);
     }
 
     #[tokio::test(flavor = "multi_thread")]

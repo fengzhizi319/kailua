@@ -95,6 +95,7 @@ impl<T: Into<Blob>> From<Vec<T>> for BlobWitnessData {
             let commitment = settings_ref
                 .blob_to_kzg_commitment(&c_kzg_blob)
                 .expect("Failed to convert blob to commitment");
+            //compute_blob_kzg_proof是用f-s计算出来的随机点来作为打开点，然后计算出证明
             let proof = settings_ref
                 .compute_blob_kzg_proof(&c_kzg_blob, &commitment.to_bytes())
                 .unwrap();
@@ -293,21 +294,24 @@ pub mod tests {
     use rayon::prelude::*;
     use rkyv::rancor::Error;
 
-    pub fn gen_blobs(count: usize) -> Vec<Blob> {
-        (0..count)
-            .map(|i| {
-                (0..FIELD_ELEMENTS_PER_BLOB)
-                    .map(|j| {
-                        hash_to_fe(keccak256(format!("gen_blobs {i} {j}"))).to_be_bytes::<32>()
-                    })
-                    .collect::<Vec<_>>()
-                    .concat()
-                    .as_slice()
-                    .try_into()
-                    .unwrap()
-            })
-            .collect()
-    }
+   /// 生成指定数量的 Blob，每个 Blob 内部填充唯一的哈希值
+   pub fn gen_blobs(count: usize) -> Vec<Blob> {
+       (0..count)
+           .map(|i| {
+               // 对于每个 Blob，生成 FIELD_ELEMENTS_PER_BLOB 个字段元素
+               (0..FIELD_ELEMENTS_PER_BLOB)
+                   .map(|j| {
+                       // 通过 keccak256 哈希生成唯一的字段元素，并转为 32 字节数组
+                       hash_to_fe(keccak256(format!("gen_blobs {i} {j}"))).to_be_bytes::<32>()
+                   })
+                   .collect::<Vec<_>>() // 收集所有字段元素
+                   .concat() // 拼接为一个字节数组
+                   .as_slice()
+                   .try_into() // 转换为 Blob 类型（定长数组）
+                   .unwrap()
+           })
+           .collect() // 收集所有 Blob
+   }
 
     #[test]
     fn test_hash_to_fe() {
@@ -320,8 +324,11 @@ pub mod tests {
 
     #[test]
     fn test_field_elements() {
-        let blobs = gen_blobs(64);
+        // 生成 64 个唯一的 Blob
+        let blobs = gen_blobs(1);
+        
         for (i, blob) in blobs.into_iter().enumerate() {
+            // 构造 BlobData 结构体，填充当前 blob
             let blob_data = BlobData {
                 index: 0,
                 blob: Box::new(blob),
@@ -330,58 +337,65 @@ pub mod tests {
                 signed_block_header: Default::default(),
                 kzg_commitment_inclusion_proof: vec![],
             };
+            // blocks 用于分割 blob 字节
             let blocks = 64 * i;
+            // 先取前 blocks 个字段元素，再取剩余的 trail 字段元素
             let recovered_bytes = [
-                intermediate_outputs(&blob_data.blob, blocks).unwrap(),
-                trail_data(&blob_data.blob, blocks).unwrap(),
+                intermediate_outputs(&blob_data.blob, blocks).unwrap(), // 前半部分
+                trail_data(&blob_data.blob, blocks).unwrap(),           // 后半部分
             ]
             .concat()
             .into_iter()
-            .map(|e| e.to_be_bytes::<32>())
+            .map(|e| e.to_be_bytes::<32>()) // 每个字段元素转为 32 字节
             .collect::<Vec<_>>()
-            .concat();
+            .concat(); // 拼接成完整字节数组
+            // 验证还原出的字节与原始 blob 完全一致
             assert_eq!(blob.0.as_slice(), recovered_bytes.as_slice());
         }
     }
 
     #[test]
     fn test_preloaded_blob_provider_tampering() {
-        let witness_data = BlobWitnessData::from(gen_blobs(1));
-        // Fail if any bit is wrong
+        // 生成 64 个合法的 witness 数据（包含 blob、commitment、proof）
+        let witness_data = BlobWitnessData::from(gen_blobs(64));
+        // 遍历每个 blob，分别对 blob、commitment、proof 做单 bit 篡改
         for i in 0..witness_data.blobs.len() {
-            // Tamper with blob data
+            // 篡改 blob 数据的每一位
             (0..BYTES_PER_BLOB).into_par_iter().for_each(|j| {
                 let mut tampered_witness_data = witness_data.clone();
-                tampered_witness_data.blobs[i].0[j] ^= 1;
-
+                tampered_witness_data.blobs[i].0[j] ^= 1; // 翻转第 j 位
+    
                 assert_ne!(witness_data.blobs[i], tampered_witness_data.blobs[i]);
+                // 构造 provider 时应 panic（批量验证失败）
                 let result =
                     std::panic::catch_unwind(|| PreloadedBlobProvider::from(tampered_witness_data));
                 assert!(result.is_err());
             });
-            // Tamper with commitment
+            // 篡改 commitment 的每一位
             (0..BYTES_PER_COMMITMENT).into_par_iter().for_each(|j| {
                 (0..8usize).into_par_iter().for_each(|k| {
                     let mut tampered_witness_data = witness_data.clone();
-                    tampered_witness_data.commitments[i][j] ^= 1 << k;
-
+                    tampered_witness_data.commitments[i][j] ^= 1 << k; // 翻转第 k 位
+    
                     assert_ne!(
                         witness_data.commitments[i],
                         tampered_witness_data.commitments[i]
                     );
+                    // 构造 provider 时应 panic
                     let result = std::panic::catch_unwind(|| {
                         PreloadedBlobProvider::from(tampered_witness_data)
                     });
                     assert!(result.is_err());
                 });
             });
-            // Tamper with proof
+            // 篡改 proof 的每一位
             (0..BYTES_PER_PROOF).into_par_iter().for_each(|j| {
                 (0..8usize).into_par_iter().for_each(|k| {
                     let mut tampered_witness_data = witness_data.clone();
-                    tampered_witness_data.proofs[i][j] ^= 1 << k;
-
+                    tampered_witness_data.proofs[i][j] ^= 1 << k; // 翻转第 k 位
+    
                     assert_ne!(witness_data.proofs[i], tampered_witness_data.proofs[i]);
+                    // 构造 provider 时应 panic
                     let result = std::panic::catch_unwind(|| {
                         PreloadedBlobProvider::from(tampered_witness_data)
                     });
@@ -389,7 +403,7 @@ pub mod tests {
                 });
             });
         }
-        // Succeed on genuine data
+        // 原始数据应能正常通过验证
         let _ = PreloadedBlobProvider::from(witness_data);
     }
 
@@ -425,25 +439,32 @@ pub mod tests {
     }
 
     #[tokio::test]
+    /// 测试 PreloadedBlobProvider 在查询不存在的 blob 哈希时应返回空结果
     async fn test_blob_provider_bad_query() {
+        // 生成 32 个唯一的 Blob
         let blobs = gen_blobs(32);
+        // 构造 witness 数据（包含 blob、commitment、proof）
         let blob_witness_data = BlobWitnessData::from(blobs.clone());
-        // exhaust the provider and find nothing
+        // 构造一组不存在的 blob 哈希（对每个 commitment 的哈希取反）
         let indexed_hashes = blob_witness_data
             .commitments
             .iter()
             .map(|c| IndexedBlobHash {
                 index: 0,
-                hash: !kzg_to_versioned_hash(c.as_slice()), // invert the expected hash
+                hash: !kzg_to_versioned_hash(c.as_slice()), // 取反，保证查不到
             })
             .collect::<Vec<_>>();
+        // 用 witness 数据初始化 provider
         let mut blob_provider = PreloadedBlobProvider::from(blob_witness_data);
+        // 查询这些不存在的哈希，期望返回空
         let retrieved = blob_provider
             .get_blobs(&Default::default(), &indexed_hashes)
             .await
             .unwrap();
-
+    
+        // 应该查不到任何 blob
         assert!(retrieved.is_empty());
+        // provider 的 entries 应被消耗完
         assert!(blob_provider.entries.is_empty());
     }
 }

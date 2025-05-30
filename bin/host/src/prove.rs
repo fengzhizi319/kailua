@@ -36,15 +36,15 @@ use tracing::{info, warn};
 /// Computes a receipt if it is not cached
 #[allow(clippy::too_many_arguments)]
 pub async fn compute_fpvm_proof(
-    args: KailuaHostArgs,
-    rollup_config: RollupConfig,
-    disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_hash: B256,
-    precondition_validation_data_hash: B256,
-    stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
-    prove_snark: bool,
-    task_sender: Sender<Oneshot>,
+    args: KailuaHostArgs,                     // 宿主程序配置参数
+    rollup_config: RollupConfig,             // Rollup链配置信息
+    disk_kv_store: Option<RWLKeyValueStore>,  // 磁盘键值存储（用于缓存中间数据）
+    precondition_hash: B256,                  // 预处理数据完整性校验值
+    precondition_validation_data_hash: B256,  // 预处理数据在L1上的存储证明
+    stitched_boot_info: Vec<StitchedBootInfo>, // 已拼接的启动信息集合
+    stitched_proofs: Vec<Receipt>,            // 已生成的子证明集合
+    prove_snark: bool,                        // 是否生成SNARK证明标志位
+    task_sender: Sender<Oneshot>,             // 异步任务发送通道
 ) -> Result<Option<Receipt>, ProvingError> {
     // report transaction count
     if !stitched_boot_info.is_empty() {
@@ -57,7 +57,7 @@ pub async fn compute_fpvm_proof(
     //      on failure, report error
     //  3. compute series of execution-only proofs
     //  4. compute derivation-proof with stitched executions
-
+    // 阶段1：完整证明尝试
     let stitching_only = args.kona.agreed_l2_output_root == args.kona.claimed_l2_output_root;
     // generate master proof
     info!("Attempting complete proof.");
@@ -80,6 +80,7 @@ pub async fn compute_fpvm_proof(
     )
     .await;
     // on WitnessSizeError or SeekProofError, extract execution trace
+    // 处理完整证明结果：成功直接返回，失败则提取已执行区块
     let executed_blocks = match complete_proof_result {
         Err(ProvingError::WitnessSizeError(_, _, executed_blocks)) => executed_blocks,
         Err(ProvingError::SeekProofError(_, executed_blocks)) => executed_blocks,
@@ -89,11 +90,13 @@ pub async fn compute_fpvm_proof(
     let (_, execution_cache) = split_executions(executed_blocks.clone());
 
     // perform a derivation-only run to check its provability
+    // 阶段2：派生derivation证明验证
     if !args.proving.skip_derivation_proof {
         info!(
             "Performing derivation-only run for {} executions.",
             execution_cache.len()
         );
+        //先执行正确性验证，但不执行证明，同时验证是否发生WitnessSizeError错误
         let derivation_only_result = tasks::compute_oneshot_task(
             args.clone(),
             rollup_config.clone(),
@@ -118,6 +121,7 @@ pub async fn compute_fpvm_proof(
             return Ok(Some(derivation_only_result?));
         };
         // abort if pure derivation may OOM
+        // 当见证数据总大小超过安全阈值时触发
         if witness_size > args.proving.max_witness_size {
             warn!(
                 "Derivation-only witness size {} exceeds limit {}.",
@@ -127,6 +131,7 @@ pub async fn compute_fpvm_proof(
     }
 
     // create proofs channel
+    // 阶段3：分治证明生成
     let result_channel = async_channel::unbounded();
     let mut result_pq = BinaryHeap::new();
     // start with full execution proof
@@ -147,9 +152,11 @@ pub async fn compute_fpvm_proof(
         .await
         .expect("task_channel should not be closed");
     // divide and conquer executions
+    // 分治处理循环（二分法拆分大任务）
     let mut num_proofs = 1;
     while result_pq.len() < num_proofs {
         // Wait for more proving results
+        // 接收证明结果
         let oneshot_result = result_channel
             .1
             .recv()
@@ -190,6 +197,7 @@ pub async fn compute_fpvm_proof(
             }
         }
         // Split workload at midpoint (num_blocks > 1)
+        // 根据错误类型拆分任务
         let mid_point = starting_block + num_blocks / 2;
         let mid_exec = executed_blocks
             .iter()
@@ -201,6 +209,7 @@ pub async fn compute_fpvm_proof(
         let mut lower_job_args = oneshot_result.cached.args.clone();
         lower_job_args.kona.claimed_l2_output_root = mid_output;
         lower_job_args.kona.claimed_l2_block_number = mid_point;
+        // 创建下半区任务（包含中间点）
         task_sender
             .send(Oneshot {
                 cached_task: create_cached_execution_task(
@@ -215,6 +224,7 @@ pub async fn compute_fpvm_proof(
             .expect("task_channel should not be closed");
 
         // upper half workload starts after midpoint
+        // 创建上半区任务（中间点之后）
         let mut upper_job_args = oneshot_result.cached.args;
         upper_job_args.kona.agreed_l2_output_root = mid_output;
         upper_job_args.kona.agreed_l2_head_hash = mid_exec.artifacts.header.hash();
@@ -232,6 +242,7 @@ pub async fn compute_fpvm_proof(
             .expect("task_channel should not be closed");
     }
     // Read result_pq for stitched executions and proofs
+    // 阶段4：最终证明合成
     let (proofs, stitched_executions): (Vec<_>, Vec<_>) = result_pq
         .into_sorted_vec()
         .into_iter()
@@ -329,20 +340,42 @@ pub fn create_cached_execution_task(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 计算并缓存零知识证明的核心函数
+///
+/// # 功能说明
+/// 1. 构造区块链启动信息
+/// 2. 生成唯一证明标识
+/// 3. 检查本地缓存（存在则直接读取）
+/// 4. 未缓存时生成新证明
+/// 5. 返回最终的证明结果
+///
+/// # 参数说明
+/// - args: 宿主程序配置参数
+/// - rollup_config: 区块链rollup配置
+/// - disk_kv_store: 磁盘键值存储（用于缓存）
+/// - precondition_hash: 预处理条件哈希
+/// - precondition_validation_data_hash: 预处理验证数据哈希
+/// - stitched_*: 拼接的区块执行数据和证明
+/// - prove_snark: 是否生成SNARK证明
+/// - force_attempt: 强制尝试生成证明（即使可能失败）
+/// - seek_proof: 是否查找现有证明
 pub async fn compute_cached_proof(
-    args: KailuaHostArgs,
-    rollup_config: RollupConfig,
-    disk_kv_store: Option<RWLKeyValueStore>,
-    precondition_hash: B256,
-    precondition_validation_data_hash: B256,
-    stitched_executions: Vec<Vec<Execution>>,
-    stitched_boot_info: Vec<StitchedBootInfo>,
-    stitched_proofs: Vec<Receipt>,
-    prove_snark: bool,
-    force_attempt: bool,
-    seek_proof: bool,
+    args: KailuaHostArgs,// 宿主程序配置参数
+    rollup_config: RollupConfig,// 区块链rollup配置
+    disk_kv_store: Option<RWLKeyValueStore>,// 磁盘键值存储（用于缓存）
+    precondition_hash: B256,// 预处理条件哈希
+    precondition_validation_data_hash: B256,// precondition_hash在L1中的索引的hash
+
+
+    stitched_executions: Vec<Vec<Execution>>,// 拼接的区块执行数据
+    stitched_boot_info: Vec<StitchedBootInfo>,// 拼接的启动信息
+    stitched_proofs: Vec<Receipt>,//拼接的区块执行数据和证明
+    prove_snark: bool,// SNARK证明类型标志，true表示groth16证明，false表示succinct证明
+    force_attempt: bool,// 强制尝试模式（忽略资源限制）
+    seek_proof: bool,// 实际执行证明生成开关，true表示需要生成证明，false表示仅验证正确性，而不生成证明
 ) -> Result<Receipt, ProvingError> {
     // extract single chain kona config
+    // 构建 区块开始时的启动信息（包含L1/L2状态）
     let boot = BootInfo {
         l1_head: args.kona.l1_head,
         agreed_l2_output_root: args.kona.agreed_l2_output_root,
@@ -352,14 +385,16 @@ pub async fn compute_cached_proof(
         rollup_config,
     };
     // Construct expected journal
+    //拼接多个块的boot信息，包含L1/L2状态、链ID等，形成ProofJournal
     let proof_journal = stitch_boot_info(
-        &boot,
-        bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_ID).into(),
-        args.proving.payout_recipient_address.unwrap_or_default(),
-        precondition_hash,
-        stitched_boot_info.clone(),
+        &boot,  // 区块链启动配置（包含L1/L2状态、链ID等）
+        bytemuck::cast::<[u32; 8], [u8; 32]>(KAILUA_FPVM_ID).into(), // 虚拟机唯一标识
+        args.proving.payout_recipient_address.unwrap_or_default(), // 收益地址（零地址表示无奖励）
+        precondition_hash, // 预处理数据完整性校验值
+        stitched_boot_info.clone(), // 多区块执行上下文拼接信息
     );
     // Skip computation if previously saved to disk
+    // 对proof_journal计算keccak256哈希从而生成唯一的文件名
     let proof_file_name = proof_file_name(&proof_journal);
     if matches!(Path::new(&proof_file_name).try_exists(), Ok(true)) && seek_proof {
         info!("Proving skipped. Proof file {proof_file_name} already exists.");
@@ -367,20 +402,22 @@ pub async fn compute_cached_proof(
         info!("Computing uncached proof.");
 
         // generate a proof using the kailua client and kona server
+        // （启动本地服务+客户端协作）
         crate::server::start_server_and_native_client(
-            args,
-            disk_kv_store,
-            precondition_validation_data_hash,
-            stitched_executions,
-            stitched_boot_info,
-            stitched_proofs,
-            prove_snark,
-            force_attempt,
-            seek_proof,
+            args, // 传递完整配置参数
+            disk_kv_store, // 共享存储
+            precondition_validation_data_hash, // 验证数据哈希
+            stitched_executions, // 拼接的区块执行轨迹
+            stitched_boot_info, // 启动配置信息
+            stitched_proofs, // 已有证明片段
+            prove_snark, // SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+            force_attempt, // 强制尝试模式，true表示忽略资源限制
+            seek_proof, // 证明生成开关
         )
-        .await?;
+            .await?; // 异步等待证明生成，如果生成失败则返回错误
     }
 
+    // 最终读取证明文件（统一入口）
     read_proof_file(&proof_file_name)
         .await
         .context(format!(

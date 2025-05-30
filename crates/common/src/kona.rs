@@ -267,18 +267,25 @@ pub mod tests {
     use kona_mpt::{Nibbles, NoopTrieProvider};
 
     #[tokio::test(flavor = "multi_thread")]
+    // 测试 OracleL1ChainProvider 的 trie_node_by_hash 方法
     pub async fn test_l1_chain_provider_trie_provider() {
         let mut vec_oracle = VecOracle::default();
+        // 构造一个 TrieNode::Leaf 节点，前缀为 keccak256("yummy")，值为 "deadbeef"
         let node = TrieNode::Leaf {
             prefix: Nibbles::unpack(keccak256(b"yummy").as_slice()),
             value: bytes!("deadbeef"),
         };
+        // 对节点进行 RLP 编码
         let node_data = alloy_rlp::encode(&node);
+        // 计算节点的哈希
         let node_hash = keccak256(&node_data);
+        // 将节点的 RLP 编码数据插入到 vec_oracle，key 为节点哈希
         vec_oracle.insert_preimage(PreimageKey::new_keccak256(node_hash.0), node_data.clone());
+        // 创建 OracleL1ChainProvider，初始 head 为零哈希
         let provider = OracleL1ChainProvider::new(B256::ZERO, Arc::new(vec_oracle))
             .await
             .unwrap();
+        // 验证通过 trie_node_by_hash 查询到的节点与原节点一致
         assert_eq!(provider.trie_node_by_hash(node_hash).unwrap(), node);
     }
 
@@ -286,7 +293,9 @@ pub mod tests {
     pub async fn test_l1_chain_provider() {
         // prepare data
         let mut vec_oracle = VecOracle::default();
+
         // prepare txn data
+        // 构造一笔 EIP-1559 交易，并签名
         let txn = TxEnvelope::Eip1559(
             TxEip1559 {
                 chain_id: 0,
@@ -299,21 +308,28 @@ pub mod tests {
                 access_list: Default::default(),
                 input: Default::default(),
             }
-            .into_signed(Signature::new(U256::from(1), U256::from(2), true)),
+                .into_signed(Signature::new(U256::from(1), U256::from(2), true)),
         );
+        // RLP 编码交易
         let txn_data = txn.encoded_2718();
+
+        // 构造交易根 Trie，仅包含一笔交易
         let mut txn_root = TrieNode::Empty;
         txn_root
             .insert(
-                &Nibbles::unpack(alloy_rlp::encode(0u64).as_slice()),
+                &Nibbles::unpack(alloy_rlp::encode(0u64).as_slice()), // key 为 0
                 txn_data.into(),
                 &NoopTrieProvider,
             )
             .unwrap();
+
         // prepare receipts data
+        // 构造收据，RLP 编码
         let receipt = ReceiptEnvelope::Eip1559(ReceiptWithBloom::from(Receipt::<Log>::default()))
             .into_primitives_receipt();
         let receipt_data = receipt.encoded_2718();
+
+        // 构造收据根 Trie，仅包含一条收据
         let mut rpt_root = TrieNode::Empty;
         rpt_root
             .insert(
@@ -329,13 +345,17 @@ pub mod tests {
             receipts_root: rpt_root.blind(),
             ..Default::default()
         };
+        // 计算区块头哈希
         let head_hash = head.hash_slow();
         // new
-        vec_oracle.insert_preimage(
-            PreimageKey::new_keccak256(head_hash.0),
-            alloy_rlp::encode(&head),
-        );
+
+        // 向预言机插入区块头、交易根、收据根的 RLP 编码数据
+        // vec_oracle.insert_preimage(
+        //     PreimageKey::new_keccak256(head_hash.0),
+        //     alloy_rlp::encode(&head),
+        // );
         // transactions by hash
+        // 交易相关
         vec_oracle.insert_preimage(
             PreimageKey::new_keccak256(head_hash.0),
             alloy_rlp::encode(&head),
@@ -344,6 +364,7 @@ pub mod tests {
             PreimageKey::new_keccak256(txn_root.blind().0),
             alloy_rlp::encode(&txn_root),
         );
+        //
         // receipts by hash
         vec_oracle.insert_preimage(
             PreimageKey::new_keccak256(head_hash.0),
@@ -354,11 +375,14 @@ pub mod tests {
             alloy_rlp::encode(&rpt_root),
         );
 
+        // 实例化链提供者
         // instantiate provider
         let mut provider = OracleL1ChainProvider::new(head_hash, Arc::new(vec_oracle))
             .await
             .unwrap();
+
         // txn by hash
+        // 验证通过区块哈希获取交易和区块信息
         assert_eq!(
             provider
                 .block_info_and_transactions_by_hash(head_hash)
@@ -375,6 +399,7 @@ pub mod tests {
             )
         );
         // receipts by hash
+        // 验证通过区块哈希获取收据
         assert_eq!(
             provider.receipts_by_hash(head_hash).await.unwrap(),
             vec![receipt.as_receipt().unwrap().clone()]

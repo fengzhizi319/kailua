@@ -216,16 +216,24 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         bytes calldata kzgProof
     ) external virtual returns (bool success);
 
-    function updateProofStatus(address payoutRecipient, bytes32 childSignature, ProofStatus outcome) internal {
+    function updateProofStatus(
+        address payoutRecipient,  // 证明者的奖励接收地址
+        bytes32 childSignature,   // 子提案的签名标识
+        ProofStatus outcome       // 证明结果状态（VALIDITY/FAULT）
+    ) internal {
+        // 更新子提案的证明状态
         // Update proof status
         proofStatus[childSignature] = outcome;
 
         // Announce proof status
+        // 触发Proven事件通知状态变更
         emit Proven(childSignature, outcome);
 
+        // 记录证明者的地址
         // Set the game's prover address
         prover[childSignature] = payoutRecipient;
 
+        // 记录证明时间戳（使用当前区块时间）
         // Set the game's proving timestamp
         provenAt[childSignature] = Timestamp.wrap(uint64(block.timestamp));
     }
@@ -494,24 +502,30 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
     // ------------------------------
 
     /// @notice Proves that a proposal committed to an incorrect transition
+    // proveOutputFault 处理主输出错误（核心业务逻辑）
     function proveOutputFault(
-        address payoutRecipient,
-        uint64[2] calldata co,
-        bytes calldata encodedSeal,
-        bytes32 acceptedOutputHash,
-        uint256 proposedOutputFe,
-        bytes32 computedOutputHash,
-        bytes[] calldata blobCommitments,
-        bytes[] calldata kzgProofs
+        address payoutRecipient,    // 奖励接收地址（通常为证明者或惩罚接收方）
+        uint64[2] calldata co,      // 争议坐标数组 [子提案索引, 争议输出索引]
+        bytes calldata encodedSeal,  // RISC Zero的零知识证明密封数据
+        bytes32 acceptedOutputHash, // 父提案接受的输出哈希（正确值）
+        uint256 proposedOutputFe,   // 子提案声明的输出字段元素（需验证的错误值）
+        bytes32 computedOutputHash, // 实际计算得到的正确输出哈希
+        bytes[] calldata blobCommitments,  // KZG多项式承诺数组（用于验证中间输出）
+        bytes[] calldata kzgProofs        // KZG证明数组（对应承诺的证明）
     ) external {
+        // 获取子合约实例（根据坐标数组第一个元素索引）
         KailuaTournament childContract = children[co[0]];
         // INVARIANT: Proofs cannot be submitted unless the child is playing.
+        // 验证1：父合约必须处于进行中状态，即还没有确认哪个子合约是正确的。
+        // 防止对已解决/结束的提案进行证明
         if (childContract.status() != GameStatus.IN_PROGRESS) {
             revert GameNotInProgress();
         }
 
         bytes32 childSignature = childContract.signature();
         // INVARIANT: Proofs can only be submitted once
+        // 验证2：防止重复提交证明
+        // 确保当前签名尚未被证明过
         if (proofStatus[childSignature] != ProofStatus.NONE) {
             revert AlreadyProven();
         }
@@ -522,41 +536,54 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         }
 
         // INVARIANT: Proofs can only pertain to computed outputs
+        // 验证4：争议索引有效性检查
+        // 确保争议输出索引不超过提案输出总数
         if (co[1] >= PROPOSAL_OUTPUT_COUNT) {
             revert InvalidDisputedClaimIndex();
         }
 
         // Validate the common output root.
+        // 验证5：验证共同输出根（父级接受的值）
         if (co[1] == 0) {
             // Note: acceptedOutputHash cannot be a reduced fe because the comparison below will fail
             // The safe output is the parent game's output when proving the first output
+            // 当争议索引为0时，直接对比父合约的根声明，因为第0个输出就是父合约的根声明
+            // 确保接受的输出哈希与当前合约的根声明一致
             require(acceptedOutputHash == rootClaim().raw(), "bad acceptedOutput");
         } else {
             // Note: acceptedOutputHash cannot be a reduced fe because the journal would not be provable
             // Prove common output publication
+            // 对于非首个输出，验证前序输出的正确性
+            // 使用KZG证明验证子合约的中间输出
             require(
                 childContract.verifyIntermediateOutput(
-                    co[1] - 1, KailuaKZGLib.hashToFe(acceptedOutputHash), blobCommitments[0], kzgProofs[0]
+                    co[1] - 1, // 前一个输出索引
+                    KailuaKZGLib.hashToFe(acceptedOutputHash), // 转换为字段元素
+                    blobCommitments[0],   // 首个blob承诺
+                    kzgProofs[0]          // 对应的KZG证明
                 ),
                 "bad acceptedOutput kzg"
             );
         }
 
         // Validate the claimed output root.
+        // 验证6：验证提案声明的输出根
         if (co[1] == PROPOSAL_OUTPUT_COUNT - 1) {
             // INVARIANT: Proofs can only show disparities
+            // 当争议为最后一个输出时，直接对比子合约的根声明
             if (computedOutputHash == childContract.rootClaim().raw()) {
                 revert NoConflict();
             }
         } else {
             // Note: proposedOutputFe must be a canonical point or point eval precompile call will fail
             // Prove divergent output publication
+            // 对于中间输出，使用KZG证明验证其正确性
             require(
                 childContract.verifyIntermediateOutput(
-                    co[1],
+                    co[1], // 当前争议索引
                     proposedOutputFe,
-                    blobCommitments[blobCommitments.length - 1],
-                    kzgProofs[kzgProofs.length - 1]
+                    blobCommitments[blobCommitments.length - 1], // 最后一个blob承诺
+                    kzgProofs[kzgProofs.length - 1]              // 最后一个KZG证明
                 ),
                 "bad proposedOutput kzg"
             );
@@ -567,11 +594,13 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         }
 
         // Construct the expected journal
+        // 构造零知识证明所需的日志摘要
         {
+            // 计算声明的区块号：当前L2区块号 + (输出索引+1)*区块跨度
             uint64 claimedBlockNumber = uint64(l2BlockNumber() + (co[1] + 1) * OUTPUT_BLOCK_SPAN);
             bytes32 journalDigest = sha256(
                 abi.encodePacked(
-                    // The address of the recipient of the payout for this proof
+                // The address of the recipient of the payout for this proof
                     payoutRecipient,
                     // No precondition hash
                     bytes32(0x0),
@@ -591,6 +620,8 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
             );
 
             // reverts on failure
+            // 执行零知识证明验证（核心安全操作）
+            // 验证密封数据、镜像ID和日志摘要的一致性
             RISC_ZERO_VERIFIER.verify(encodedSeal, FPVM_IMAGE_ID, journalDigest);
         }
 
@@ -599,20 +630,31 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
 
     /// @notice Proves that a proposal contains invalid intermediate data
     function proveNullFault(
+        // 支付奖励接收地址，奖励证明者
         address payoutRecipient,
+        // [子提案索引, 尾部数据索引]
+        // 子提案索引：要挑战的子合约在children数组中的位置
+        // 尾部数据索引：必须 ≥ PROPOSAL_OUTPUT_COUNT，表示主输出之后的非法数据位置
         uint64[2] calldata co,
+        // 错误的尾部字段元素（必须是非零的无效数据）
         uint256 proposedOutputFe,
+        // 单个blob的KZG多项式承诺（用于验证非法数据的存在）
         bytes calldata blobCommitment,
+        // 对应承诺的KZG证明（通过预编译合约验证）
         bytes calldata kzgProof
     ) external {
+        // 获取要挑战的子合约实例
         KailuaTournament childContract = children[co[0]];
         // INVARIANT: Proofs cannot be submitted unless the children are playing.
+        // 验证1：子合约必须处于进行中状态
         if (childContract.status() != GameStatus.IN_PROGRESS) {
             revert GameNotInProgress();
         }
 
+        // 获取子合约唯一签名标识（由rootClaim和blob哈希生成）
         bytes32 childSignature = childContract.signature();
         // INVARIANT: Proofs can only be submitted once
+        // 验证2：防止重复提交证明
         if (proofStatus[childSignature] != ProofStatus.NONE) {
             revert AlreadyProven();
         }
@@ -623,6 +665,7 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         }
 
         // INVARIANT: Proofs can only pertain to intermediate commitments
+        // 验证3：必须针对尾部数据（索引必须超出主输出范围）
         if (co[1] == PROPOSAL_OUTPUT_COUNT - 1) {
             revert InvalidDisputedClaimIndex();
         }
@@ -638,18 +681,23 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         // correctly point to the target trailing zero output
         // INVARIANT: The divergence occurs at a proper blob index
         uint64 feOffset = isTrailFe ? co[1] - 1 : co[1];
+        // 验证4：非法数据必须出现在最后一个blob中
+        // PROPOSAL_BLOBS-1 表示最后一个blob的索引
         if (KailuaKZGLib.blobIndex(feOffset) >= PROPOSAL_BLOBS) {
-            revert InvalidDataRemainder();
+            revert InvalidDataRemainder();// 防止在非尾部blob添加非法数据
         }
 
         // Validate the claimed output root publications
         // Note: proposedOutputFe must be a canonical field element or point eval precompile call will fail
+        // 核心验证：通过预编译合约验证KZG证明
+        // 验证proposedOutputFe确实存在于承诺的blob中
         require(
             childContract.verifyIntermediateOutput(feOffset, proposedOutputFe, blobCommitment, kzgProof),
             "bad proposedOutput kzg"
         );
 
         // Update dispute status based on trailing data
+        // 更新子合约状态为FAULT（触发惩罚机制）
         updateProofStatus(payoutRecipient, childSignature, ProofStatus.FAULT);
     }
 }
