@@ -59,13 +59,13 @@ async fn main() -> anyhow::Result<()> {
        - op_node_provider属于Rollup协调层，管理状态提交和跨链通信
      */
     // fetch starting block number
-    
+
     let l2_provider = if args.kona.is_offline() {
         None
     } else {
         Some(args.kona.create_providers().await?.l2)
     };
-        // 初始化 OpNode 提供者
+    // 初始化 OpNode 提供者
     // 用于查询 L2 输出根（output root）和提交证明到链上
     /*
     op_node_provider 在这段代码中是与 Optimistic Rollup 节点通信的关键组件，主要有以下作用：
@@ -249,10 +249,10 @@ async fn main() -> anyhow::Result<()> {
                         // 缓存本次证明任务的相关参数，用于后续排序和可能的重新处理
                         cached: Cached {
                             // 用于优先队列排序的任务参数
-			    // used for sorting
+                            // used for sorting
                             args: job_args,
                             // 以下参数在当前逻辑中未使用，但保留供后续可能的扩展
-			    // all unused
+                            // all unused
                             rollup_config: rollup_config.clone(),
                             disk_kv_store: disk_kv_store.clone(),
                             precondition_hash,
@@ -396,8 +396,8 @@ async fn main() -> anyhow::Result<()> {
             true,
             task_channel.0.clone(),
         )
-        .await
-        .context("Failed to compute FPVM proof.")?;
+            .await
+            .context("Failed to compute FPVM proof.")?;
     }
 
     info!("Exiting host program.");
