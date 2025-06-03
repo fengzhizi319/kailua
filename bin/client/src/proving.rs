@@ -115,7 +115,7 @@ where
     // 阶段2：生成见证数据（包含区块链状态转换的有效性证明所需的所有输入）
     let (proof_journal, mut witness_vec): (ProofJournal, Witness<VecOracle>) = {
         // Instantiate oracles
-	// 2.1 初始化预映像服务
+        // 2.1 初始化预映像服务
         // 创建带缓存的预映像预言机（LRU缓存提升性能，降低重复请求开销）
         let preimage_oracle = Arc::new(CachingOracle::new(
             ORACLE_LRU_SIZE,
@@ -135,8 +135,8 @@ where
             execution_cache.clone(), // 克隆执行轨迹缓存（避免所有权转移）
             stitched_boot_info.clone(), // 克隆启动配置信息（L1/L2初始状态）
         )
-        .await
-        .expect("Failed to run vec witgen client.")
+            .await
+            .expect("Failed to run vec witgen client.")
     };
 
     let execution_trace =
@@ -183,7 +183,7 @@ where
         stitched_proofs,
         prove_snark,
     )
-    .await
+        .await
 }
 
 #[allow(clippy::type_complexity)]
@@ -236,13 +236,13 @@ pub fn shard_witness_data(data: &mut [PreimageVecEntry]) -> anyhow::Result<Vec<V
 }
 
 pub fn sum_witness_size(witness: &Witness<VecOracle>) -> (usize, usize) {
-// 将见证数据编码为分片帧
+    // 将见证数据编码为分片帧
     let (witness_frames, _) =
         encode_witness_frames(witness.deep_clone()).expect("Failed to encode VecOracle");
     (
         // 计算主见证数据大小（第一个分片
-	witness_frames.first().map(|f| f.len()).unwrap(),
-	// 计算总见证大小（所有分片之和）
+        witness_frames.first().map(|f| f.len()).unwrap(),
+        // 计算总见证大小（所有分片之和）
         witness_frames.iter().map(|f| f.len()).sum::<usize>(),
     )
 }
@@ -265,7 +265,7 @@ pub async fn seek_fpvm_proof(
                 stitched_proofs,
                 proving,
             )
-            .await?
+                .await?
         }
         _ => {
             if bonsai::should_use_bonsai() {
@@ -278,7 +278,7 @@ pub async fn seek_fpvm_proof(
                     prove_snark,
                     proving.segment_limit,
                 )
-                .await?
+                    .await?
             }
         }
     };

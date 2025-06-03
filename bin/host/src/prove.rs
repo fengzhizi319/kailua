@@ -62,23 +62,21 @@ pub async fn compute_fpvm_proof(
     // generate master proof
     info!("Attempting complete proof.");
     let complete_proof_result = tasks::compute_oneshot_task(
-        args.clone(),
-        rollup_config.clone(),
-        disk_kv_store.clone(),
-        precondition_hash,
-        precondition_validation_data_hash,
-        vec![],
-        stitched_boot_info.clone(),
-        stitched_proofs.clone(),
-        // pass through snark requirement
-        prove_snark,
-        // force attempting to compute the proof if it only combines boot infos
-        stitching_only,
-        // skip seeking a complete proof if skipping derivation
-        !args.proving.skip_derivation_proof,
-        task_sender.clone(),
+        args.clone(),                        // 宿主程序配置参数（克隆避免所有权问题）
+        rollup_config.clone(),              // Rollup链配置信息（克隆保证线程安全）
+        disk_kv_store.clone(),              // 磁盘KV存储实例（克隆用于多线程访问）
+        precondition_hash,                  // 预处理数据完整性校验哈希
+        precondition_validation_data_hash,  // 预处理验证数据的L1存储证明哈希
+        vec![],            // 已执行的区块列表（此处为空表示完整运行）
+        stitched_boot_info.clone(),         // 需要拼接的启动信息集合（克隆保证数据独立）
+        stitched_proofs.clone(),            // 已有子证明集合（克隆用于安全拼接）
+        prove_snark,                        // SNARK证明生成标志（true启用zk-SNARK压缩）
+        stitching_only,                     // 纯拼接模式标志（true跳过执行仅做证明合并）
+        !args.proving.skip_derivation_proof, // 派生证明查找标志（取反命令行参数配置）
+        task_sender.clone(),                // 异步任务通道发送端（克隆用于多线程分发）
     )
     .await;
+
     // on WitnessSizeError or SeekProofError, extract execution trace
     // 处理完整证明结果：成功直接返回，失败则提取已执行区块
     let executed_blocks = match complete_proof_result {
@@ -356,7 +354,7 @@ pub fn create_cached_execution_task(
 /// - precondition_hash: 预处理条件哈希
 /// - precondition_validation_data_hash: 预处理验证数据哈希
 /// - stitched_*: 拼接的区块执行数据和证明
-/// - prove_snark: 是否生成SNARK证明
+/// - prove_snark: SNARK证明类型，true表示groth16，false表示succinct
 /// - force_attempt: 强制尝试生成证明（即使可能失败）
 /// - seek_proof: 是否查找现有证明
 pub async fn compute_cached_proof(

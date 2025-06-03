@@ -386,18 +386,19 @@ async fn main() -> anyhow::Result<()> {
             .collect::<Vec<_>>();
 
         kailua_host::prove::compute_fpvm_proof(
-            base_args,
-            rollup_config.clone(),
-            disk_kv_store.clone(),
-            precondition_hash,
-            precondition_validation_data_hash,
-            stitched_boot_info,
-            proofs,
-            true,
-            task_channel.0.clone(),
+            base_args,                      // 基础配置参数（已调整agreed/claimed参数以启用拼接模式）
+            rollup_config.clone(),          // Rollup链配置信息（克隆避免所有权转移）
+            disk_kv_store.clone(),          // 磁盘KV存储实例（克隆用于多线程访问）
+            precondition_hash,              // 预处理数据的哈希（用于完整性校验）
+            precondition_validation_data_hash, // 预处理验证数据的哈希（用于L1数据验证）
+            stitched_boot_info,             // 需要拼接的启动信息列表（按区块顺序排列）
+            proofs,                         // 已生成的子证明集合（将被合并为最终证明）
+            true,                //  SNARK证明类型，true表示groth16，false表示succinct
+            task_channel.0.clone(),         // 任务通道的发送端（用于异步任务调度）
         )
             .await
-            .context("Failed to compute FPVM proof.")?;
+            .context("Failed to compute FPVM proof.")?; // 错误处理上下文（定位证明失败位置）
+
     }
 
     info!("Exiting host program.");
