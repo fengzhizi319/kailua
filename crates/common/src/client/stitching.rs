@@ -112,7 +112,7 @@ where
         execution_cache,
         None,
     )
-    .expect("Failed to compute output hash.");
+        .expect("Failed to compute output hash.");
 
     // Verify proofs recursively for boundless composition
     // 核心步骤2：在ZKVM环境下加载已验证的zkvm证明journal的hash的集合
@@ -251,14 +251,14 @@ pub fn verify_stitching_journal(
     #[cfg(target_os = "zkvm")]
     {
         let journal_digest = _proof_journal.digest();
-    // 验证缓存检查（避免重复验证）
+        // 验证缓存检查（避免重复验证）
         if proven_fpvm_journals.contains(&journal_digest) {
-        // 命中缓存：记录验证状态
+            // 命中缓存：记录验证状态
             crate::client::log(&format!("FOUND {journal_digest}"));
         } else {
-        // 缓存未命中：执行链下验证
+            // 缓存未命中：执行链下验证
             crate::client::log(&format!("ASSUME {journal_digest}"));
-        // 调用RISC Zero底层验证原语：
+            // 调用RISC Zero底层验证原语：
             risc0_zkvm::guest::env::verify(_fpvm_image_id.0, &_proof_journal)
                 .expect("Failed to verify stitched journal assumption");
         }
@@ -803,7 +803,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
 
         teardown();
     }
@@ -866,7 +866,7 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
-        .unwrap();
+            .unwrap();
 
         teardown();
     }
@@ -893,7 +893,7 @@ pub mod tests {
             None,
             vec![],
         )
-        .unwrap();
+            .unwrap();
 
         teardown();
     }
@@ -924,7 +924,7 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
-        .unwrap();
+            .unwrap();
 
         teardown();
     }

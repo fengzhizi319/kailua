@@ -210,14 +210,15 @@ async fn main() -> anyhow::Result<()> {
             let result_channel = result_channel.clone();
             tokio::spawn(async move {
                 let result = kailua_host::prove::compute_fpvm_proof(
-                    job_args.clone(),
-                    rollup_config,
-                    disk_kv_store,
-                    precondition_hash,
-                    precondition_validation_data_hash,
-                    vec![],
-                    vec![],
-                    !have_split,//false取反为true
+                    job_args.clone(),// 基础配置参数（包含agreed/claimed等参数以启）
+                    rollup_config,// Rollup链配置信息（克隆避免所有权转移）
+                    disk_kv_store,// 磁盘KV存储实例（克隆用于多线程访问）
+                    precondition_hash,// 预处理数据的哈希（用于完整性校验）
+                    precondition_validation_data_hash,// 预处理验证数据的哈希（用于L1数据验证）
+                    vec![],//需要拼接的启动信息列表（按区块顺序排列）
+                    vec![],// 已生成的子证明集合（将被合并为最终证明）
+                    !have_split,//初始任务have_split为false，拆分后的子任务设置为true。因此，在分拆计算时，子任务的have_split应该为true，以标识它们是拆分后的任务。
+                    //SNARK证明类型，true表示groth16，false表示succinct
                     task_channel.0.clone(),
                 )
                     .await;

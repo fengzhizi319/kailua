@@ -43,7 +43,7 @@ pub async fn compute_fpvm_proof(
     precondition_validation_data_hash: B256,  // 预处理数据在L1上的存储证明
     stitched_boot_info: Vec<StitchedBootInfo>, // 已拼接的启动信息集合
     stitched_proofs: Vec<Receipt>,            // 已生成的子证明集合
-    prove_snark: bool,                        // 是否生成SNARK证明标志位
+    prove_snark: bool,                        // SNARK证明类型，true表示groth16，false表示succinct
     task_sender: Sender<Oneshot>,             // 异步任务发送通道
 ) -> Result<Option<Receipt>, ProvingError> {
     // report transaction count
@@ -70,8 +70,8 @@ pub async fn compute_fpvm_proof(
         vec![],            // 已执行的区块列表（此处为空表示完整运行）
         stitched_boot_info.clone(),         // 需要拼接的启动信息集合（克隆保证数据独立）
         stitched_proofs.clone(),            // 已有子证明集合（克隆用于安全拼接）
-        prove_snark,                        // SNARK证明生成标志（true启用zk-SNARK压缩）
-        stitching_only,                     // 纯拼接模式标志（true跳过执行仅做证明合并）
+        prove_snark,                        // // SNARK证明类型，true表示groth16，false表示succinct
+        stitching_only,                     // 强制证明尝试标志（跳过安全检查）
         !args.proving.skip_derivation_proof, // 派生证明查找标志（取反命令行参数配置）
         task_sender.clone(),                // 异步任务通道发送端（克隆用于多线程分发）
     )
