@@ -247,48 +247,57 @@ pub fn sum_witness_size(witness: &Witness<VecOracle>) -> (usize, usize) {
     )
 }
 pub async fn seek_fpvm_proof(
-    proving: &ProvingArgs,
-    boundless: BoundlessArgs,
-    proof_journal: ProofJournal,
-    witness_frames: Vec<Vec<u8>>,
-    stitched_proofs: Vec<Receipt>,
-    prove_snark: bool,
+    proving: &ProvingArgs,           // 证明生成配置参数
+    boundless: BoundlessArgs,        // 分布式证明市场相关参数
+    proof_journal: ProofJournal,     // 包含执行日志和元数据的证明记录
+    witness_frames: Vec<Vec<u8>>,    // 序列化后的见证数据分片集合
+    stitched_proofs: Vec<Receipt>,   // 需要拼接的子证明集合
+    prove_snark: bool,               // 是否生成SNARK证明的标志
 ) -> Result<(), ProvingError> {
-    // compute the zkvm proof
+    // 计算zkvm证明（核心证明生成逻辑）
     let proof = match boundless.market {
+        // 使用分布式证明市场生成证明（生产环境）
         Some(marked_provider_config) if !is_dev_mode() => {
             boundless::run_boundless_client(
-                marked_provider_config,
-                boundless.storage,
-                proof_journal,
-                witness_frames,
-                stitched_proofs,
-                proving,
+                marked_provider_config,  // 市场提供方配置
+                boundless.storage,      // 存储后端配置
+                proof_journal,           // 包含L2链状态转换的证明日志
+                witness_frames,         // 序列化后的执行轨迹数据
+                stitched_proofs,         // 需要组合的子证明
+                proving,                 // 证明参数
             )
-                .await?
+            .await?
         }
+        // 本地证明生成模式
         _ => {
             if bonsai::should_use_bonsai() {
-                bonsai::run_bonsai_client(witness_frames, stitched_proofs, prove_snark, proving)
-                    .await?
-            } else {
-                zkvm::run_zkvm_client(
-                    witness_frames,
-                    stitched_proofs,
-                    prove_snark,
-                    proving.segment_limit,
+                // 使用Bonsai云服务生成证明
+                bonsai::run_bonsai_client(
+                    witness_frames,     // 输入见证数据
+                    stitched_proofs,    // 待拼接的证明片段 
+                    prove_snark,       // SNARK生成开关
+                    proving,            // 性能参数（如分段限制）
                 )
-                    .await?
+                .await?
+            } else {
+                // 使用本地zkvm生成证明
+                zkvm::run_zkvm_client(
+                    witness_frames,     // 序列化的见证数据分片
+                    stitched_proofs,    // 需要组合的证明片段
+                    prove_snark,       // 控制是否生成最终SNARK
+                    proving.segment_limit, // 分段证明的最大长度
+                )
+                .await?
             }
         }
     };
-
-    // Save proof file to disk
     // 持久化存储证明文件
+    // 将生成的证明序列化后写入磁盘，文件命名格式为：proof_<区块高度>_<输出根哈希>.bin
     save_proof_to_disk(&proof).await;
 
     Ok(())
 }
+
 
 pub async fn save_proof_to_disk(proof: &Receipt) {
     // Save proof file to disk

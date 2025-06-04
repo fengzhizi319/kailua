@@ -40,7 +40,7 @@ pub async fn run_zkvm_client(
     info!("Running zkvm client.");
     // 使用 tokio::task::spawn_blocking 在阻塞线程池中执行耗时的证明生成任务
     let prove_info = tokio::task::spawn_blocking(move || {
-        // 调用 build_zkvm_env 函数创建 ZKVM 执行环境
+        // 调用 build_zkvm_env 函数创建 ZKVM 执行环境，把witness和Receipt注入到执行环境中
         let env = build_zkvm_env(witness_frames, stitched_proofs, segment_limit)?;
         // 获取默认的证明生成器
         let prover = default_prover();
@@ -58,7 +58,7 @@ pub async fn run_zkvm_client(
             .context("prove_with_opts")?;
 
         // Convert to our own KailuaProveInfo
-	// 将 RISC0 的证明信息转换为自定义的 KailuaProveInfo 结构
+        // 将 RISC0 的证明信息转换为自定义的 KailuaProveInfo 结构
         let kailua_prove_info = KailuaProveInfo {
             receipt: risc0_prove_info.receipt,
             stats: KailuaSessionStats {
@@ -73,12 +73,12 @@ pub async fn run_zkvm_client(
         // 返回转换后的 KailuaProveInfo 结构，若有错误则包装为 anyhow::Error
         Ok::<_, anyhow::Error>(kailua_prove_info)
     })
-    // 等待阻塞任务完成
-    .await
-    // 处理任务执行过程中的错误，将其转换为 ProvingError::OtherError
-    .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
-    // 处理证明生成过程中的错误，将其转换为 ProvingError::ExecutionError
-    .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
+        // 等待阻塞任务完成
+        .await
+        // 处理任务执行过程中的错误，将其转换为 ProvingError::OtherError
+        .map_err(|e| ProvingError::OtherError(anyhow!(e)))?
+        // 处理证明生成过程中的错误，将其转换为 ProvingError::ExecutionError
+        .map_err(|e| ProvingError::ExecutionError(anyhow!(e)))?;
 
     // 记录证明生成的总周期数和用户周期数日志
     info!(
