@@ -71,8 +71,8 @@ pub async fn compute_fpvm_proof(
         stitched_boot_info.clone(),         // 需要拼接的启动信息集合（克隆保证数据独立）
         stitched_proofs.clone(),            // 已有子证明集合（克隆用于安全拼接）
         prove_snark,                        // // SNARK证明类型，true表示groth16，false表示succinct
-        stitching_only,                     // 强制证明尝试标志（跳过安全检查）
-        !args.proving.skip_derivation_proof, // 派生证明查找标志（取反命令行参数配置）
+        stitching_only,                     // 强制证明尝试标志（跳过witness size安全检查）
+        !args.proving.skip_derivation_proof, // true//是否生成证明（true表示生成，false表示仅验证）
         task_sender.clone(),                // 异步任务通道发送端（克隆用于多线程分发）
     )
     .await;
@@ -95,6 +95,7 @@ pub async fn compute_fpvm_proof(
             execution_cache.len()
         );
         //先执行正确性验证，但不执行证明，同时验证是否发生WitnessSizeError错误
+        //只检查能否顺利完成派生过程，以及是否会因见证数据过大等原因失败。这样可以提前发现潜在的资源瓶颈或错误，为后续分治递归做准备。
         let derivation_only_result = tasks::compute_oneshot_task(
             args.clone(),
             rollup_config.clone(),
@@ -111,11 +112,14 @@ pub async fn compute_fpvm_proof(
         )
         .await;
         // propagate unexpected error up on failure to trigger higher-level division
+        //如果derivation_only_result是Err(ProvingError::SeekProofError(...))，则提取witness_size并继续执行后续代码。否则，进入else块，记录警告并返回结果。
         let Err(ProvingError::SeekProofError(witness_size, _)) = derivation_only_result else {
+            // 1. 日志记录
             warn!(
                 "Unexpected derivation-only result (is_ok={}).",
                 derivation_only_result.is_ok()
             );
+            // 2. 返回值处理
             return Ok(Some(derivation_only_result?));
         };
         // abort if pure derivation may OOM

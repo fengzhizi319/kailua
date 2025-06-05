@@ -155,12 +155,13 @@ where
             "Witness size {} exceeds limit {}.",
             witness_size, proving.max_witness_size
         );
+        // 安全控制分支，当force_attempt为false时，中止证明过程，返回WitnessSizeError错误。
         if !force_attempt {
             warn!("Aborting.");
             return Err(ProvingError::WitnessSizeError(
-                witness_size,
-                proving.max_witness_size,
-                execution_trace,
+                witness_size,        // 实际见证数据大小
+                proving.max_witness_size, // 配置的最大允许值
+                execution_trace,     // 当前执行轨迹（用于后续分治处理）
             ));
         }
         warn!("Continuing..");
