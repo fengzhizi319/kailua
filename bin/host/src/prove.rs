@@ -78,7 +78,7 @@ pub async fn compute_fpvm_proof(
     .await;
 
     // on WitnessSizeError or SeekProofError, extract execution trace
-    // 处理完整证明结果：成功直接返回，失败则提取已执行区块
+    // 处理完整证明结果：成功直接返回，失败则返回execution_trace
     let executed_blocks = match complete_proof_result {
         Err(ProvingError::WitnessSizeError(_, _, executed_blocks)) => executed_blocks,
         Err(ProvingError::SeekProofError(_, executed_blocks)) => executed_blocks,
@@ -290,7 +290,8 @@ pub async fn compute_fpvm_proof(
         .await?,
     ))
 }
-
+///execution_cache比较大，如1～100，而args中的区块范围是它的子集，如10～20，那么就把execution_cache中的10～20的区块拿出来，
+/// 生成一个新的execution_cache，然后再用这个新的execution_cache生成缓存任务。
 pub fn create_cached_execution_task(
     args: KailuaHostArgs,
     rollup_config: RollupConfig,
