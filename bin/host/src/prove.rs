@@ -111,6 +111,10 @@ pub async fn compute_fpvm_proof(
             task_sender.clone(),
         )
         .await;
+        //SeekProofError
+        //WitnessSizeError
+        //ok
+        
         // propagate unexpected error up on failure to trigger higher-level division
         //如果derivation_only_result是Err(ProvingError::SeekProofError(...))，则提取witness_size并继续执行后续代码。否则，进入else块，记录警告并返回结果。
         let Err(ProvingError::SeekProofError(witness_size, _)) = derivation_only_result else {

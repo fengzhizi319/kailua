@@ -166,6 +166,9 @@ where
         }
         warn!("Continuing..");
     }
+    //WitnessSizeError
+
+    //SeekProofError
 
     // 阶段4：证明生成控制
     if !seek_proof {
