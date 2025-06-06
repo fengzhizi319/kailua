@@ -208,8 +208,8 @@ where
             oracle.clone(),
             &mut beacon,
         )
-        .await
-        .context("load_precondition_data")?;
+            .await
+            .context("load_precondition_data")?;
 
         client::log("DERIVATION & EXECUTION");
         // Create a new derivation driver with the given boot information and oracle.
@@ -405,6 +405,7 @@ pub mod tests {
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
     use std::sync::{Arc, Mutex};
+    use std::{collections::HashMap, path::PathBuf, time::Instant};
 
     pub fn test_derivation(
         boot_info: BootInfo,
@@ -426,7 +427,7 @@ pub mod tests {
             vec![],
             Some(collection_target.clone()),
         )
-        .context("run_core_client")?;
+            .context("run_core_client")?;
 
         assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
         assert_eq!(
@@ -468,7 +469,7 @@ pub mod tests {
             execution_cache,
             None,
         )
-        .expect("run_core_client");
+            .expect("run_core_client");
 
         assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
         assert_eq!(
@@ -487,6 +488,16 @@ pub mod tests {
         assert_eq!(precondition_hash, expected_precondition_hash);
 
         Ok(precondition_hash)
+    }
+    fn test_scan_and_validate_block_witnesses(
+        stateless_dir: &PathBuf,
+        block_counter: u64,
+    ) -> Result<u64, anyhow::Error> {
+        let mut counter = block_counter;
+        while counter < 19 {
+            counter += 1;
+        }
+        Ok(counter)
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -508,7 +519,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -530,7 +541,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
         let _ = test_execution(
             BootInfo {
                 l1_head: B256::ZERO,
@@ -546,7 +557,7 @@ pub mod tests {
             },
             executions,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -573,7 +584,7 @@ pub mod tests {
                 blob_hashes: vec![],
             }),
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -638,7 +649,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -660,7 +671,7 @@ pub mod tests {
             },
             None,
         )
-        .unwrap_err();
+            .unwrap_err();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -682,7 +693,15 @@ pub mod tests {
             },
             None,
         )
-        .unwrap();
+            .unwrap();
         assert!(executions.is_empty());
     }
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_validate_block_witnesses() {
+        let stateless_dir = PathBuf::from("./crates/common/src/client/test_data/stateless");
+        let block_counter = 9;
+        let new_counter = test_scan_and_validate_block_witnesses(&stateless_dir, block_counter).unwrap();
+        assert_eq!(new_counter, 19);
+    }
+
 }

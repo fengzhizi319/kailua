@@ -58,7 +58,7 @@ use tracing::info;
 /// - disk_kv_store: 可选的磁盘存储（None时自动创建）
 /// - precondition_validation_data_hash: 预处理验证数据哈希
 /// - stitched_*: 多个区块执行数据的拼接结果
-/// - prove_snark: SNARK证明生成开关
+/// - prove_snark: SNARK证明类型
 /// - force_attempt: 强制尝试生成证明模式
 /// - seek_proof: 查找现有证明文件模式，当 seek_proof=true 时优先查找本地证明文件，当 seek_proof=false 时强制生成新证明
 pub async fn start_server_and_native_client(
@@ -68,7 +68,7 @@ pub async fn start_server_and_native_client(
     stitched_executions: Vec<Vec<Execution>>,//多个区块执行数据的拼接结果
     stitched_boot_info: Vec<StitchedBootInfo>,//启动配置信息
     stitched_proofs: Vec<Receipt>,//已有证明片段
-    prove_snark: bool,// SNARK证明生成开关，true表示groth16证明，false表示succinct证明
+    prove_snark: bool,// SNARK证明类型，true表示groth16证明，false表示succinct证明
     force_attempt: bool,//强制尝试模式，true表示忽略资源限制
     seek_proof: bool,//证明生成开关
 ) -> Result<(), ProvingError> {

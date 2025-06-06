@@ -44,6 +44,7 @@ pub async fn run_zkvm_client(
         let env = build_zkvm_env(witness_frames, stitched_proofs, segment_limit)?;
         // 获取默认的证明生成器
         let prover = default_prover();
+        
         // 根据 prove_snark 参数选择证明选项
         let prover_opts = if prove_snark {
             // 若为 true，选择 Groth16 SNARK 证明选项
