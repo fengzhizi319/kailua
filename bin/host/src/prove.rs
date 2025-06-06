@@ -297,6 +297,7 @@ pub fn create_cached_execution_task(
     disk_kv_store: Option<RWLKeyValueStore>,
     execution_cache: &[Arc<Execution>],
 ) -> Cached {
+    // 确定起始区块号：在缓存中查找与约定输出根匹配的第一个执行块，取其区块号减1
     let starting_block = execution_cache
         .iter()
         .find(|e| e.agreed_output == args.kona.agreed_l2_output_root)
@@ -305,45 +306,51 @@ pub fn create_cached_execution_task(
         .header
         .number
         - 1;
+    
+    // 计算需要处理的区块总数（当前声明的区块号 - 起始区块）
     let num_blocks = args.kona.claimed_l2_block_number - starting_block;
     info!(
         "Processing execution-only job with {} blocks from block {}",
         num_blocks, starting_block
     );
-    // Extract executed slice
+
+    // 提取指定范围内的执行区块：过滤出在(starting_block, claimed_l2_block_number]区间内的执行记录
     let executed_blocks = execution_cache
         .iter()
         .filter(|e| {
             let executed_block_number = e.artifacts.header.number;
-
             starting_block < executed_block_number
                 && executed_block_number <= args.kona.claimed_l2_block_number
         })
         .cloned()
         .collect::<Vec<_>>();
+    
+    // 生成执行前状态验证哈希，用于保证执行输入的完整性
     let precondition_hash = exec_precondition_hash(executed_blocks.as_slice());
 
-    // Force the proving attempt regardless of witness size if we prove just one block
+    // 强制尝试标志：当处理单个区块时，即使见证数据过大也强制生成证明
     let force_attempt = num_blocks == 1;
     let executed_blocks = executed_blocks
         .iter()
         .map(|a| a.as_ref().clone())
         .collect::<Vec<_>>();
 
+    // 构建缓存任务对象
     Cached {
-        args,
-        rollup_config,
-        disk_kv_store,
-        precondition_hash,
-        precondition_validation_data_hash: B256::ZERO,
-        stitched_executions: vec![executed_blocks],
-        stitched_boot_info: vec![],
-        stitched_proofs: vec![],
-        prove_snark: false,
-        force_attempt,
-        seek_proof: true,
+        args,                    // 继承宿主程序配置
+        rollup_config,          // 使用原始Rollup链配置
+        disk_kv_store,          // 共享磁盘存储实例
+        precondition_hash,      // 执行前状态验证哈希
+        precondition_validation_data_hash: B256::ZERO,  // 预置零值（执行任务无需L1验证）
+        stitched_executions: vec![executed_blocks],  // 封装执行轨迹（单元素vec为分治预留）
+        stitched_boot_info: vec![],     // 清空启动信息（执行任务独立生成）
+        stitched_proofs: vec![],        // 清空已有证明（初始执行任务无前置证明）
+        prove_snark: false,             // 强制使用简明证明（执行阶段无需SNARK）
+        force_attempt,                  // 传递强制尝试标志
+        seek_proof: true,               // 启用证明查找（优先使用缓存）
     }
 }
+
 
 #[allow(clippy::too_many_arguments)]
 /// 计算并缓存零知识证明的核心函数
