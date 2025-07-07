@@ -133,25 +133,35 @@ impl VecOracle {
     /// This function is part of a broader mechanism for ensuring data integrity in cryptographic or
     /// state-based systems relying on preimages for verification.
     pub fn validate(preimages: &[PreimageVecEntry]) -> anyhow::Result<()> {
+        // 遍历每个分片（entry），e 表示分片索引
         for (e, entry) in preimages.iter().enumerate() {
+            // 遍历分片内的每个预映像，p 表示在分片内的索引
             for (p, (key, value, prev)) in entry.iter().enumerate() {
+                // 如果该 key 类型不需要验证，则跳过
                 if !needs_validation(&key.key_type()) {
                     continue;
+                // 如果有 prev 指针，说明该预映像引用了之前的某个预映像
                 } else if let Some((i, j)) = prev {
+                    // 检查 prev 指针不能指向未来的分片
                     if e < *i {
                         bail!("Attempted to validate preimage against future vec entry.");
+                    // 检查 prev 指针不能指向当前或未来的预映像
                     } else if e == *i && p <= *j {
                         bail!(
                             "Attempted to validate preimage against future preimage in vec entry."
                         );
+                    // 检查 prev 指向的 key 必须与当前 key 相同
                     } else if key != &preimages[*i][*j].0 {
                         bail!("Cached preimage key comparison failed");
+                    // 检查 prev 指向的 value 必须与当前 value 相同
                     } else if value != &preimages[*i][*j].1 {
                         bail!("Cached preimage value comparison failed");
                     } else {
+                        // 如果都通过，继续下一个
                         continue;
                     }
                 }
+                // 对没有 prev 指针的预映像，直接做常规验证
                 validate_preimage(key, value)?;
             }
         }
@@ -234,45 +244,65 @@ impl WitnessOracle for VecOracle {
     /// - Sharding ensures that no shard exceeds the given `shard_size` by aggregating pre-images until the limit is reached.
     /// - Only pre-images requiring validation, as determined by `needs_validation`, will have validation pointers added.
     fn finalize_preimages(&mut self, shard_size: usize, with_validation_ptrs: bool) {
+        // 在最终处理前验证预映像数据，若验证失败则触发 panic
         self.validate_preimages()
             .expect("Failed to validate preimages during finalization");
+        // 获取预映像数据的可变引用
         let mut preimages = self.preimages.lock().unwrap();
         // flatten and sort
+        // 扁平化并排序预映像数据
+        // 将嵌套的预映像数据展平为一个一维向量
         let mut flat_vec = core::mem::take(preimages.deref_mut())
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
+        // 记录日志，输出最终处理的预映像数量、分片大小和是否添加验证指针的信息
         info!("Finalizing {} preimages with shard size {shard_size} and validation ptrs {with_validation_ptrs}", flat_vec.len());
+        // 按预期访问顺序对扁平化后的向量进行排序，这里通过反转向量实现
         // sort by expected access
         flat_vec.reverse();
+        // 根据大小限制对向量进行分片
+        // 初始化分片向量，包含一个空的分片
         // shard vectors by size limit
         let mut sharded_vec = vec![vec![]];
+        // 记录当前分片的大小
         let mut last_shard_size = 0;
+        // 遍历扁平化后的向量，将元素按分片大小限制分配到不同的分片中
         for value in flat_vec {
+            // 如果当前元素的大小加上当前分片的大小超过分片大小限制，则创建一个新的分片
             if value.1.len() + last_shard_size > shard_size && last_shard_size > 0 {
                 sharded_vec.push(vec![]);
                 last_shard_size = 0;
             }
+            // 更新当前分片的大小
             last_shard_size += value.1.len();
+            // 将元素添加到当前分片的末尾
             sharded_vec.last_mut().unwrap().push(value);
         }
+        // 用分片后的向量替换原始的预映像数据
         let _ = core::mem::replace(preimages.deref_mut(), sharded_vec);
+        // 如果不需要添加验证指针，则直接返回
         // add validation pointers
         if !with_validation_ptrs {
             return;
         }
+        // 初始化一个哈希表，用于缓存预映像键及其在分片中的位置
         let mut cache: HashMap<PreimageKey, (usize, usize)> =
             HashMap::with_capacity(preimages.len());
+        // 遍历每个分片及其元素，为需要验证的预映像添加验证指针
         for (i, entry) in preimages.iter_mut().enumerate() {
             for (j, (key, _, pointer)) in entry.iter_mut().enumerate() {
+                // 如果该预映像类型不需要验证，则跳过
                 if !needs_validation(&key.key_type()) {
                     continue;
                 } else if let Some(prev) = cache.insert(*key, (i, j)) {
+                    // 如果哈希表中已经存在该预映像键，则更新其验证指针
                     pointer.replace(prev);
                 }
             }
         }
     }
+
 }
 
 impl FlushableCache for VecOracle {
@@ -339,12 +369,21 @@ impl PreimageOracleClient for VecOracle {
     /// This function behavior depends on the target OS:
     /// - On `zkvm` targets: Processes shard deserialization and validation.
     /// - On non-`zkvm` targets: Panics when the preimages vector is depleted.
+    /// 异步获取指定 key 的预映像值。
+    ///
+    /// 该方法会遍历内部的预映像分片（shard），查找与 key 匹配的值，
+    /// 若未找到则会尝试反序列化新的分片（仅 zkvm 环境），
+    /// 并使用全局队列缓存临时未命中的元素。
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+        // 获取预映像分片的可变锁
         let mut preimages = self.preimages.lock().unwrap();
+        // 获取全局队列的可变锁，用于缓存临时未命中的元素
         let mut queue = QUEUE.lock().unwrap();
-        // handle variations in memory access operations due to hashmap usages
+        // 主循环，直到找到目标 key 或耗尽所有分片
         loop {
+            // 如果当前没有分片
             if preimages.is_empty() {
+                // zkvm 环境下，尝试反序列化新的分片并校验
                 #[cfg(target_os = "zkvm")]
                 {
                     crate::client::log("DESERIALIZE STREAMED SHARD");
@@ -353,6 +392,7 @@ impl PreimageOracleClient for VecOracle {
                         .expect("Failed to validate streamed preimages");
                     crate::client::log("STREAMED SHARD VALIDATED");
                 }
+                // 非 zkvm 环境直接 panic，表示预映像已耗尽
                 #[cfg(not(target_os = "zkvm"))]
                 panic!(
                     "Exhausted VecOracle seeking {key} ({} queued preimages)",
@@ -360,13 +400,18 @@ impl PreimageOracleClient for VecOracle {
                 )
             }
 
+            // 获取当前最后一个分片（栈顶）
             let entry = preimages.last_mut().unwrap();
+            // 遍历分片内的所有预映像
             loop {
+                // 弹出分片中的最后一个元素
                 let Some((last_key, value, _)) = entry.pop() else {
                     break;
                 };
 
+                // 如果 key 匹配，返回对应的 value
                 if key == last_key {
+                    // 如果队列中有临时元素，合并回当前分片
                     if !queue.is_empty() {
                         log(&format!("TEMP ELEMENTS: {}", queue.len()));
                         entry.extend(core::mem::take(queue.deref_mut()));
@@ -374,9 +419,10 @@ impl PreimageOracleClient for VecOracle {
 
                     return Ok(value);
                 }
-                // keep entry in queue for later use, pointer is no longer necessary
+                // 未命中则将该元素放入队列头部，等待后续查找
                 queue.push_front((last_key, value, None));
             }
+            // 当前分片已遍历完，弹出分片，进入下一个分片
             preimages.pop();
         }
     }
@@ -453,7 +499,7 @@ pub fn read_shard() -> PreimageVecEntry {
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
-pub mod tests {
+pub mod test_vec_oracle {
     use super::*;
     use alloy_primitives::keccak256;
     use kona_preimage::PreimageKeyType;
@@ -462,23 +508,29 @@ pub mod tests {
     use rkyv::rancor::Error;
     use std::collections::HashSet;
 
+    // 生成一个带有指定数量和副本数的 VecOracle 及其值集合，一共 value_count * copies 个（key，value）
     pub fn prepare_vec_oracle(value_count: usize, copies: usize) -> (VecOracle, Vec<Vec<u8>>) {
         let mut oracle = VecOracle::default();
         assert_eq!(oracle.preimage_count(), 0);
 
+
+        // 构造 value_count 个不同的 value，每个为 Vec<u8>
         let values = (0..value_count)
             .map(|i| format!("{i} test {i} value {i}").as_bytes().to_vec())
             .collect::<Vec<_>>();
         // insert sha3 keys
+        // 为每个 value 插入 sha3（keccak256）类型的 key
         for value in &values {
             let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
             for _ in 0..copies {
                 oracle.insert_preimage(sha3_key, value.clone());
             }
         }
+        // 校验预映像
         oracle.validate_preimages().unwrap();
         assert_eq!(oracle.preimage_count(), values.len() * copies);
         // insert sha2 keys
+        // 为每个 value 插入 sha2（sha256）类型的 key
         for value in &values {
             let sha2_key = PreimageKey::new(
                 SHA2::hash_bytes(value).as_bytes().try_into().unwrap(),
@@ -488,14 +540,17 @@ pub mod tests {
                 oracle.insert_preimage(sha2_key, value.clone());
             }
         }
+        // 再次校验
         oracle.validate_preimages().unwrap();
         assert_eq!(oracle.preimage_count(), values.len() * copies * 2);
 
         (oracle, values)
     }
 
+    // 消耗 oracle 中的所有预映像，确保每个 key 都能被正确取出
     pub async fn exhaust_vec_oracle(copies: usize, oracle: VecOracle, values: Vec<Vec<u8>>) {
         let initial_size = oracle.preimage_count();
+        // 逆序遍历 values，依次取出 sha3 和 sha2 key 对应的值
         for value in values.iter().rev() {
             let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
             let sha2_key = PreimageKey::new(
@@ -511,28 +566,38 @@ pub mod tests {
             }
         }
         // ensure exhaustion
+        // 校验所有预映像已被消耗
         assert_eq!(
             oracle.preimage_count(),
             initial_size - 2 * copies * values.len()
         );
     }
 
+    // 测试 deep_clone 的正确性
     #[tokio::test]
     async fn test_deep_clone() {
+        // 构造 1024 个 value，每个有 3 个副本
         let (mut oracle, values) = prepare_vec_oracle(1024, 3);
+        // 插入一个Local类型的 key
         oracle.insert_preimage(
             PreimageKey::new([0xff; 32], PreimageKeyType::Local),
             vec![0xff; 32],
         );
+        // 每个分片只包含一个 key，并添加验证指针
         oracle.finalize_preimages(1, true);
         oracle.validate_preimages().unwrap();
+        // 记录初始数量
         // assert initial equivalence
         let size = oracle.preimage_count();
+        // 深拷贝
         let cloned = oracle.deep_clone();
         assert_eq!(size, cloned.preimage_count());
+        // 普通 clone 与 deep_clone 的区别
         // regular cloning vs deep cloning
         exhaust_vec_oracle(3, oracle.clone(), values).await;
+        // 原 oracle 只剩下 1 个（本地 key）
         assert_eq!(oracle.preimage_count(), 1);
+        // deep_clone 后的副本仍然保持原始数量
         assert_eq!(size, cloned.preimage_count());
     }
 
@@ -769,5 +834,269 @@ pub mod tests {
         oracle.write("noop").await.unwrap();
         oracle.flush();
         assert_eq!(oracle.preimage_count(), 0);
+    }
+}
+/// A structure representing a salt-based oracle for storing preimages with specialized BlockWitness support.
+///
+/// This struct provides functionality similar to VecOracle but with additional methods
+/// for handling BlockWitness data specifically.
+#[derive(Clone, Debug, Default)]
+pub struct SaltOracle {
+    /// Internal storage for preimages using a HashMap
+    preimages: Arc<Mutex<std::collections::HashMap<PreimageKey, Vec<u8>>>>,
+}
+
+impl SaltOracle {
+    /// Creates a new SaltOracle instance
+    pub fn new() -> Self {
+        Self {
+            preimages: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Creates a deep clone of the current instance.
+    pub fn deep_clone(&self) -> Self {
+        let preimages = self.preimages.lock().unwrap();
+        Self {
+            preimages: Arc::new(Mutex::new(preimages.clone())),
+        }
+    }
+
+    /// Inserts a BlockWitness into the oracle.
+    ///
+    /// # Arguments
+    /// * `block_hash` - The original block hash (32 bytes)
+    /// * `serialized_block_witness` - The serialized BlockWitness data
+    ///
+    /// # Returns
+    /// * `PreimageKey` - The witness key that was generated and used for storage
+    pub fn insert_blockwitness(&mut self, block_hash: [u8; 32], serialized_block_witness: Vec<u8>) -> PreimageKey {
+        // 将 block_hash 转换为 witness_key
+        let witness_key = PreimageKey::new_blockwitness(block_hash);
+
+        // 使用内部的 insert_preimage 方法
+        // self.insert_preimage(witness_key, serialized_block_witness);
+        self.insert_preimage(witness_key, serialized_block_witness.clone());
+
+        witness_key
+    }
+
+    /// Retrieves a BlockWitness from the oracle.
+    ///
+    /// # Arguments
+    /// * `block_hash` - The original block hash (32 bytes)
+    ///
+    /// # Returns
+    /// * `Option<Vec<u8>>` - The serialized BlockWitness data if found, None otherwise
+    pub async fn get_blockwitness(&self, block_hash: [u8; 32]) -> Option<Vec<u8>> {
+        // 将 block_hash 转换为 witness_key
+        let witness_key = PreimageKey::new_blockwitness(block_hash);
+
+        // 使用内部的 get 方法
+        self.get(witness_key).await.ok()
+    }
+
+    /// Validates the stored preimages
+    pub fn validate_stored_preimages(&self) -> anyhow::Result<()> {
+        let preimages = self.preimages.lock().unwrap();
+        for (key, value) in preimages.iter() {
+            if needs_validation(&key.key_type()) {
+                validate_preimage(key, value)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl WitnessOracle for SaltOracle {
+    fn preimage_count(&self) -> usize {
+        self.preimages.lock().unwrap().len()
+    }
+
+    fn validate_preimages(&self) -> anyhow::Result<()> {
+        self.validate_stored_preimages()
+    }
+
+    fn insert_preimage(&mut self, key: PreimageKey, value: Vec<u8>) {
+        validate_preimage(&key, &value).expect("Attempted to save invalid preimage");
+        let mut preimages = self.preimages.lock().unwrap();
+        preimages.insert(key, value);
+    }
+
+    fn finalize_preimages(&mut self, _shard_size: usize, _with_validation_ptrs: bool) {
+        // For SaltOracle, we don't need complex sharding like VecOracle
+        // Just validate the preimages
+        self.validate_preimages()
+            .expect("Failed to validate preimages during finalization");
+        info!("Finalized {} preimages in SaltOracle", self.preimage_count());
+    }
+}
+
+impl FlushableCache for SaltOracle {
+    fn flush(&self) {
+        // No-op for SaltOracle as it's in-memory
+    }
+}
+
+#[async_trait]
+impl PreimageOracleClient for SaltOracle {
+    async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+        let preimages = self.preimages.lock().unwrap();
+        preimages.get(&key).cloned().ok_or(kona_preimage::errors::PreimageOracleError::KeyNotFound)
+    }
+
+    async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
+        let value = self.get(key).await?;
+        if buf.len() != value.len() {
+            return Err(kona_preimage::errors::PreimageOracleError::KeyNotFound);
+        }
+        buf.copy_from_slice(&value);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl HintWriterClient for SaltOracle {
+    async fn write(&self, _hint: &str) -> PreimageOracleResult<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test_salt_oracle {
+    use super::*;
+    use std::collections::BTreeMap;
+    use serde::{Deserialize, Serialize};
+
+    // 测试用的数据结构 - 需要与实际的 BlockWitness 结构匹配
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub struct TestBlockWitness {
+        pub metas: BTreeMap<u64, TestBucketMeta>,
+        pub kvs: BTreeMap<TestSaltKey, Option<TestSaltValue>>,
+        pub proof: TestSaltProof,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub struct TestBucketMeta {
+        pub nonce: u64,
+        pub capacity: u64,
+        pub load: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    pub struct TestSaltKey(pub u64);
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub struct TestSaltValue {
+        pub data: Vec<u8>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub struct TestSaltProof {
+        pub proof: Vec<u8>,
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_insert_and_get_blockwitness() {
+        // 创建测试用的 BlockWitness 数据
+        let mut metas = BTreeMap::new();
+        metas.insert(1, TestBucketMeta { nonce: 42, capacity: 1024, load: 512 });
+        metas.insert(2, TestBucketMeta { nonce: 99, capacity: 2048, load: 1024 });
+
+        let mut kvs = BTreeMap::new();
+        kvs.insert(TestSaltKey(123), Some(TestSaltValue { data: vec![0xAA; 94] }));
+        kvs.insert(TestSaltKey(456), Some(TestSaltValue { data: vec![0xBB; 94] }));
+
+        let witness = TestBlockWitness {
+            metas,
+            kvs,
+            proof: TestSaltProof { proof: vec![0x11, 0x22, 0x33, 0x44] },
+        };
+
+        // 序列化测试数据
+        let serialized_block_witness = bincode::serialize(&witness).unwrap();
+        let block_hash = [0x01; 32];
+
+        // 创建 SaltOracle 并插入 BlockWitness
+        let mut oracle = SaltOracle::new();
+        let witness_key = oracle.insert_blockwitness(block_hash, serialized_block_witness.clone());
+
+        // 验证插入的 key 是正确的
+        let expected_key = PreimageKey::new_blockwitness(block_hash);
+        assert_eq!(witness_key, expected_key);
+
+        // 通过 get_blockwitness 方法读取
+        let retrieved_data = oracle.get_blockwitness(block_hash).await.unwrap();
+        assert_eq!(retrieved_data, serialized_block_witness);
+
+        // 反序列化并验证数据完整性
+        let deserialized: TestBlockWitness = bincode::deserialize(&retrieved_data).unwrap();
+        assert_eq!(deserialized.metas.len(), 2);
+        assert_eq!(deserialized.kvs.len(), 2);
+        assert_eq!(deserialized.proof.proof, vec![0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(deserialized.metas.get(&1).unwrap().nonce, 42);
+        assert_eq!(deserialized.kvs.get(&TestSaltKey(123)).unwrap().as_ref().unwrap().data, [0xAA; 94]);
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_get_nonexistent_blockwitness() {
+        let oracle = SaltOracle::new();
+        let block_hash = [0xFF; 32];
+
+        // 尝试获取不存在的 BlockWitness
+        let result = oracle.get_blockwitness(block_hash).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_multiple_blockwitness() {
+        let mut oracle = SaltOracle::new();
+
+        // 插入多个 BlockWitness
+        let witness1 = TestBlockWitness {
+            metas: BTreeMap::new(),
+            kvs: BTreeMap::new(),
+            proof: TestSaltProof { proof: vec![0x01] },
+        };
+        let witness2 = TestBlockWitness {
+            metas: BTreeMap::new(),
+            kvs: BTreeMap::new(),
+            proof: TestSaltProof { proof: vec![0x02] },
+        };
+
+        let serialized1 = bincode::serialize(&witness1).unwrap();
+        let serialized2 = bincode::serialize(&witness2).unwrap();
+        let hash1 = [0x01; 32];
+        let hash2 = [0x02; 32];
+
+        oracle.insert_blockwitness(hash1, serialized1.clone());
+        oracle.insert_blockwitness(hash2, serialized2.clone());
+
+        // 验证可以分别获取
+        let retrieved1 = oracle.get_blockwitness(hash1).await.unwrap();
+        let retrieved2 = oracle.get_blockwitness(hash2).await.unwrap();
+
+        assert_eq!(retrieved1, serialized1);
+        assert_eq!(retrieved2, serialized2);
+        assert_eq!(oracle.preimage_count(), 2);
+    }
+
+    #[test]
+    fn test_salt_oracle_deep_clone() {
+        let mut oracle = SaltOracle::new();
+        let block_hash = [0x03; 32];
+        let test_data = vec![0x12, 0x34, 0x56, 0x78];
+
+        oracle.insert_blockwitness(block_hash, test_data.clone());
+
+        // 深度克隆
+        let cloned_oracle = oracle.deep_clone();
+        assert_eq!(cloned_oracle.preimage_count(), 1);
+
+        // 验证克隆的 oracle 包含相同的数据
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let retrieved = cloned_oracle.get_blockwitness(block_hash).await.unwrap();
+            assert_eq!(retrieved, test_data);
+        });
     }
 }

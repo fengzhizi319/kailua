@@ -216,21 +216,28 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         bytes calldata kzgProof
     ) external virtual returns (bool success);
 
+    //address payoutRecipient,  // 证明者的奖励接收地址
+    //bytes32 childSignature,   // 子提案的签名标识
+    //ProofStatus outcome       // 证明结果状态（VALIDITY/FAULT）
     function updateProofStatus(address payoutRecipient, bytes32 childSignature, ProofStatus outcome) internal {
         // INVARIANT: Proofs can only be submitted once
         if (proofStatus[childSignature] != ProofStatus.NONE) {
             revert AlreadyProven();
         }
 
+        // 更新子提案的证明状态
         // Update proof status
         proofStatus[childSignature] = outcome;
 
         // Announce proof status
+        // 触发Proven事件通知状态变更
         emit Proven(childSignature, outcome);
 
+        // 记录证明者的地址
         // Set the game's prover address
         prover[childSignature] = payoutRecipient;
 
+        // 记录证明时间戳（使用当前区块时间）
         // Set the game's proving timestamp
         provenAt[childSignature] = Timestamp.wrap(uint64(block.timestamp));
     }
@@ -482,15 +489,20 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         // [ payoutRecipient, l1HeadSource ]
         address[2] calldata prHs,
         // [ childIndex, outputOffset ]
+	//争议坐标数组 [子提案索引, 争议输出索引]
         uint64[2] calldata co,
         bytes calldata encodedSeal,
         // [ acceptedOutputHash, computedOutputHash ]
+	// 父提案接受的输出哈希（正确值），子提案声明的输出字段元素（需验证的错误值）
         bytes32[2] memory ac,
-        uint256 proposedOutputFe,
+        uint256 proposedOutputFe,// 实际计算得到的正确输出哈希
         bytes[][2] calldata kzgCommitmentsProofs
     ) external {
+        // 获取子合约实例（根据坐标数组第一个元素索引）
         KailuaTournament childContract = children[co[0]];
         // INVARIANT: Proofs cannot be submitted unless the child is playing.
+        // 验证1：父合约必须处于进行中状态，即还没有确认哪个子合约是正确的。
+        // 防止对已解决/结束的提案进行证明
         if (childContract.status() != GameStatus.IN_PROGRESS) {
             revert GameNotInProgress();
         }
@@ -501,21 +513,31 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         }
 
         // INVARIANT: Proofs can only pertain to intermediate outputs
+        // 验证4：争议索引有效性检查
+        // 确保争议输出索引不超过提案输出总数
         if (co[1] >= PROPOSAL_OUTPUT_COUNT) {
             revert InvalidDisputedClaimIndex();
         }
 
         // Validate the common output root.
+        // 验证5：验证共同输出根（父级接受的值）
         if (co[1] == 0) {
             // Note: acceptedOutputHash cannot be a reduced fe because the comparison below will fail
             // The safe output is the parent game's output when proving the first output
+            // 当争议索引为0时，直接对比父合约的根声明，因为第0个输出就是父合约的根声明
+            // 确保接受的输出哈希与当前合约的根声明一致
             require(ac[0] == rootClaim().raw(), "bad acceptedOutput");
         } else {
             // Note: acceptedOutputHash cannot be a reduced fe because the journal would not be provable
             // Prove common output publication
+            // 对于非首个输出，验证前序输出的正确性
+            // 使用KZG证明验证子合约的中间输出
             require(
                 childContract.verifyIntermediateOutput(
-                    co[1] - 1, KailuaKZGLib.hashToFe(ac[0]), kzgCommitmentsProofs[0][0], kzgCommitmentsProofs[1][0]
+                    co[1] - 1, // 前一个输出索引
+		    KailuaKZGLib.hashToFe(ac[0]),// 转换为字段元素
+		    kzgCommitmentsProofs[0][0], // 首个blob承诺
+		    kzgCommitmentsProofs[1][0]// 对应的KZG证明
                 ),
                 "bad acceptedOutput kzg"
             );
@@ -524,18 +546,20 @@ abstract contract KailuaTournament is Clone, IDisputeGame {
         // Validate the claimed output root.
         if (co[1] == PROPOSAL_OUTPUT_COUNT - 1) {
             // INVARIANT: Proofs can only show disparities
+            // 当争议为最后一个输出时，直接对比子合约的根声明
             if (ac[1] == childContract.rootClaim().raw()) {
                 revert NoConflict();
             }
         } else {
             // Note: proposedOutputFe must be a canonical point or point eval precompile call will fail
             // Prove divergent output publication
+            // 对于中间输出，使用KZG证明验证其正确性
             require(
                 childContract.verifyIntermediateOutput(
-                    co[1],
+                    co[1], // 当前争议索引
                     proposedOutputFe,
-                    kzgCommitmentsProofs[0][kzgCommitmentsProofs[0].length - 1],
-                    kzgCommitmentsProofs[1][kzgCommitmentsProofs[1].length - 1]
+                    kzgCommitmentsProofs[0][kzgCommitmentsProofs[0].length - 1],// 最后一个blob承诺
+                    kzgCommitmentsProofs[1][kzgCommitmentsProofs[1].length - 1]// 最后一个KZG证明
                 ),
                 "bad proposedOutput kzg"
             );
