@@ -611,7 +611,7 @@ pub mod test_vec_oracle {
         let oracle = rkyv::from_bytes::<VecOracle, Error>(
             rkyv::to_bytes::<Error>(&oracle).unwrap().as_ref(),
         )
-        .unwrap();
+            .unwrap();
         // validate
         {
             let preimage_vecs = oracle.preimages.lock().unwrap();
@@ -637,7 +637,7 @@ pub mod test_vec_oracle {
         let oracle = rkyv::from_bytes::<VecOracle, Error>(
             rkyv::to_bytes::<Error>(&oracle).unwrap().as_ref(),
         )
-        .unwrap();
+            .unwrap();
         // validate
         {
             let preimage_vecs = oracle.preimages.lock().unwrap();
@@ -663,7 +663,7 @@ pub mod test_vec_oracle {
         let oracle = rkyv::from_bytes::<VecOracle, Error>(
             rkyv::to_bytes::<Error>(&oracle).unwrap().as_ref(),
         )
-        .unwrap();
+            .unwrap();
         // validate
         {
             let preimage_vecs = oracle.preimages.lock().unwrap();
@@ -696,7 +696,7 @@ pub mod test_vec_oracle {
         let oracle = rkyv::from_bytes::<VecOracle, Error>(
             rkyv::to_bytes::<Error>(&oracle).unwrap().as_ref(),
         )
-        .unwrap();
+            .unwrap();
         // validate
         {
             let preimage_vecs = oracle.preimages.lock().unwrap();
@@ -729,7 +729,7 @@ pub mod test_vec_oracle {
         let oracle = rkyv::from_bytes::<VecOracle, Error>(
             rkyv::to_bytes::<Error>(&oracle).unwrap().as_ref(),
         )
-        .unwrap();
+            .unwrap();
         // validate
         {
             let preimage_vecs = oracle.preimages.lock().unwrap();
@@ -841,13 +841,13 @@ pub mod test_vec_oracle {
 /// This struct provides functionality similar to VecOracle but with additional methods
 /// for handling BlockWitness data specifically.
 #[derive(Clone, Debug, Default)]
-pub struct SaltOracle {
+pub struct SaltVecOracle {
     /// Internal storage for preimages using a HashMap
     preimages: Arc<Mutex<std::collections::HashMap<PreimageKey, Vec<u8>>>>,
 }
 
-impl SaltOracle {
-    /// Creates a new SaltOracle instance
+impl SaltVecOracle {
+    /// Creates a new SaltVecOracle instance
     pub fn new() -> Self {
         Self {
             preimages: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -870,7 +870,7 @@ impl SaltOracle {
     ///
     /// # Returns
     /// * `PreimageKey` - The witness key that was generated and used for storage
-    pub fn insert_blockwitness(&mut self, block_hash: [u8; 32], serialized_block_witness: Vec<u8>) -> PreimageKey {
+    pub fn insert_block_witness(&mut self, block_hash: [u8; 32], serialized_block_witness: Vec<u8>) -> PreimageKey {
         // 将 block_hash 转换为 witness_key
         let witness_key = PreimageKey::new_blockwitness(block_hash);
 
@@ -888,7 +888,7 @@ impl SaltOracle {
     ///
     /// # Returns
     /// * `Option<Vec<u8>>` - The serialized BlockWitness data if found, None otherwise
-    pub async fn get_blockwitness(&self, block_hash: [u8; 32]) -> Option<Vec<u8>> {
+    pub async fn get_block_witness(&self, block_hash: [u8; 32]) -> Option<Vec<u8>> {
         // 将 block_hash 转换为 witness_key
         let witness_key = PreimageKey::new_blockwitness(block_hash);
 
@@ -908,7 +908,7 @@ impl SaltOracle {
     }
 }
 
-impl WitnessOracle for SaltOracle {
+impl WitnessOracle for SaltVecOracle {
     fn preimage_count(&self) -> usize {
         self.preimages.lock().unwrap().len()
     }
@@ -924,22 +924,22 @@ impl WitnessOracle for SaltOracle {
     }
 
     fn finalize_preimages(&mut self, _shard_size: usize, _with_validation_ptrs: bool) {
-        // For SaltOracle, we don't need complex sharding like VecOracle
+        // For SaltVecOracle, we don't need complex sharding like VecOracle
         // Just validate the preimages
         self.validate_preimages()
             .expect("Failed to validate preimages during finalization");
-        info!("Finalized {} preimages in SaltOracle", self.preimage_count());
+        info!("Finalized {} preimages in SaltVecOracle", self.preimage_count());
     }
 }
 
-impl FlushableCache for SaltOracle {
+impl FlushableCache for SaltVecOracle {
     fn flush(&self) {
-        // No-op for SaltOracle as it's in-memory
+        // No-op for SaltVecOracle as it's in-memory
     }
 }
 
 #[async_trait]
-impl PreimageOracleClient for SaltOracle {
+impl PreimageOracleClient for SaltVecOracle {
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
         let preimages = self.preimages.lock().unwrap();
         preimages.get(&key).cloned().ok_or(kona_preimage::errors::PreimageOracleError::KeyNotFound)
@@ -956,17 +956,20 @@ impl PreimageOracleClient for SaltOracle {
 }
 
 #[async_trait]
-impl HintWriterClient for SaltOracle {
+impl HintWriterClient for SaltVecOracle {
     async fn write(&self, _hint: &str) -> PreimageOracleResult<()> {
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod test_salt_oracle {
+pub(crate) mod test_salt_vec_oracle {
     use super::*;
     use std::collections::BTreeMap;
+    use alloy_primitives::keccak256;
+    use kona_preimage::PreimageKeyType;
     use serde::{Deserialize, Serialize};
+    use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
     // 测试用的数据结构 - 需要与实际的 BlockWitness 结构匹配
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -995,7 +998,69 @@ mod test_salt_oracle {
     pub struct TestSaltProof {
         pub proof: Vec<u8>,
     }
+    pub fn prepare_salt_vec_oracle(value_count: usize, copies: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
+        let mut oracle = SaltVecOracle::default();
+        assert_eq!(oracle.preimage_count(), 0);
 
+
+        // 构造 value_count 个不同的 value，每个为 Vec<u8>
+        let values = (0..value_count)
+            .map(|i| format!("{i} test {i} value {i}").as_bytes().to_vec())
+            .collect::<Vec<_>>();
+        // insert sha3 keys
+        // 为每个 value 插入 sha3（keccak256）类型的 key
+        for value in &values {
+            let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
+            for _ in 0..copies {
+                oracle.insert_preimage(sha3_key, value.clone());
+            }
+        }
+        // 校验预映像
+        oracle.validate_preimages().unwrap();
+        assert_eq!(oracle.preimage_count(), values.len() * copies);
+        // insert sha2 keys
+        // 为每个 value 插入 sha2（sha256）类型的 key
+        for value in &values {
+            let sha2_key = PreimageKey::new(
+                SHA2::hash_bytes(value).as_bytes().try_into().unwrap(),
+                PreimageKeyType::Sha256,
+            );
+            for _ in 0..copies {
+                oracle.insert_preimage(sha2_key, value.clone());
+            }
+        }
+        // 再次校验
+        oracle.validate_preimages().unwrap();
+        assert_eq!(oracle.preimage_count(), values.len() * copies * 2);
+
+        (oracle, values)
+    }
+
+    // 消耗 oracle 中的所有预映像，确保每个 key 都能被正确取出
+    pub async fn exhaust_salt_vec_oracle(copies: usize, oracle: SaltVecOracle, values: Vec<Vec<u8>>) {
+        let initial_size = oracle.preimage_count();
+        // 逆序遍历 values，依次取出 sha3 和 sha2 key 对应的值
+        for value in values.iter().rev() {
+            let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
+            let sha2_key = PreimageKey::new(
+                SHA2::hash_bytes(value).as_bytes().try_into().unwrap(),
+                PreimageKeyType::Sha256,
+            );
+            for _ in 0..copies {
+                let mut sha3_val = vec![0u8; value.len()];
+                oracle.get_exact(sha3_key, &mut sha3_val).await.unwrap();
+                let mut sha2_val = vec![0u8; value.len()];
+                oracle.get_exact(sha2_key, &mut sha2_val).await.unwrap();
+                assert_eq!(sha3_val, sha2_val);
+            }
+        }
+        // ensure exhaustion
+        // 校验所有预映像已被消耗
+        assert_eq!(
+            oracle.preimage_count(),
+            initial_size - 2 * copies * values.len()
+        );
+    }
     #[tokio::test]
     async fn test_salt_oracle_insert_and_get_blockwitness() {
         // 创建测试用的 BlockWitness 数据
@@ -1017,16 +1082,16 @@ mod test_salt_oracle {
         let serialized_block_witness = bincode::serialize(&witness).unwrap();
         let block_hash = [0x01; 32];
 
-        // 创建 SaltOracle 并插入 BlockWitness
-        let mut oracle = SaltOracle::new();
-        let witness_key = oracle.insert_blockwitness(block_hash, serialized_block_witness.clone());
+        // 创建 SaltVecOracle 并插入 BlockWitness
+        let mut oracle = SaltVecOracle::new();
+        let witness_key = oracle.insert_block_witness(block_hash, serialized_block_witness.clone());
 
         // 验证插入的 key 是正确的
         let expected_key = PreimageKey::new_blockwitness(block_hash);
         assert_eq!(witness_key, expected_key);
 
-        // 通过 get_blockwitness 方法读取
-        let retrieved_data = oracle.get_blockwitness(block_hash).await.unwrap();
+        // 通过 get_block_witness 方法读取
+        let retrieved_data = oracle.get_block_witness(block_hash).await.unwrap();
         assert_eq!(retrieved_data, serialized_block_witness);
 
         // 反序列化并验证数据完整性
@@ -1040,17 +1105,17 @@ mod test_salt_oracle {
 
     #[tokio::test]
     async fn test_salt_oracle_get_nonexistent_blockwitness() {
-        let oracle = SaltOracle::new();
+        let oracle = SaltVecOracle::new();
         let block_hash = [0xFF; 32];
 
         // 尝试获取不存在的 BlockWitness
-        let result = oracle.get_blockwitness(block_hash).await;
+        let result = oracle.get_block_witness(block_hash).await;
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn test_salt_oracle_multiple_blockwitness() {
-        let mut oracle = SaltOracle::new();
+        let mut oracle = SaltVecOracle::new();
 
         // 插入多个 BlockWitness
         let witness1 = TestBlockWitness {
@@ -1069,12 +1134,12 @@ mod test_salt_oracle {
         let hash1 = [0x01; 32];
         let hash2 = [0x02; 32];
 
-        oracle.insert_blockwitness(hash1, serialized1.clone());
-        oracle.insert_blockwitness(hash2, serialized2.clone());
+        oracle.insert_block_witness(hash1, serialized1.clone());
+        oracle.insert_block_witness(hash2, serialized2.clone());
 
         // 验证可以分别获取
-        let retrieved1 = oracle.get_blockwitness(hash1).await.unwrap();
-        let retrieved2 = oracle.get_blockwitness(hash2).await.unwrap();
+        let retrieved1 = oracle.get_block_witness(hash1).await.unwrap();
+        let retrieved2 = oracle.get_block_witness(hash2).await.unwrap();
 
         assert_eq!(retrieved1, serialized1);
         assert_eq!(retrieved2, serialized2);
@@ -1083,11 +1148,11 @@ mod test_salt_oracle {
 
     #[test]
     fn test_salt_oracle_deep_clone() {
-        let mut oracle = SaltOracle::new();
+        let mut oracle = SaltVecOracle::new();
         let block_hash = [0x03; 32];
         let test_data = vec![0x12, 0x34, 0x56, 0x78];
 
-        oracle.insert_blockwitness(block_hash, test_data.clone());
+        oracle.insert_block_witness(block_hash, test_data.clone());
 
         // 深度克隆
         let cloned_oracle = oracle.deep_clone();
@@ -1095,7 +1160,7 @@ mod test_salt_oracle {
 
         // 验证克隆的 oracle 包含相同的数据
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let retrieved = cloned_oracle.get_blockwitness(block_hash).await.unwrap();
+            let retrieved = cloned_oracle.get_block_witness(block_hash).await.unwrap();
             assert_eq!(retrieved, test_data);
         });
     }

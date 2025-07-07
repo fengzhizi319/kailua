@@ -35,7 +35,7 @@ pub fn needs_validation(key_type: &PreimageKeyType) -> bool {
     // 如果 key_type 不是 Local 或 GlobalGeneric，则需要验证，返回 true；否则返回 false
     !matches!(
         key_type,
-        PreimageKeyType::Local | PreimageKeyType::GlobalGeneric
+        PreimageKeyType::Local | PreimageKeyType::GlobalGeneric |PreimageKeyType::Blockwitness
     )
 }
 
@@ -423,6 +423,10 @@ mod test_validate {
         let blob_key = PreimageKey::new([0u8; 32], PreimageKeyType::Blob);
         let result = std::panic::catch_unwind(|| validate_preimage(&blob_key, b"test"));
         assert!(result.is_err());
+
+        let blockwitness_key = PreimageKey::new([0u8; 32], PreimageKeyType::Blockwitness);
+        let result = std::panic::catch_unwind(|| validate_preimage(&blob_key, b"test"));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -434,6 +438,7 @@ mod test_validate {
         assert!(needs_validation(&PreimageKeyType::Blob));
         assert!(!needs_validation(&PreimageKeyType::Local));
         assert!(!needs_validation(&PreimageKeyType::GlobalGeneric));
+        assert!(!needs_validation(&PreimageKeyType::Blockwitness));
     }
 }
 #[cfg(test)]

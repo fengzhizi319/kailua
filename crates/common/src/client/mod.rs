@@ -427,7 +427,7 @@ pub mod tests {
 
 
     #[test]
-    fn test_blockwitness_insert_and_get() {
+    fn test_block_witness_insert_and_get() {
         // 创建测试用的 BlockWitness 数据
         let mut metas = BTreeMap::new();
         metas.insert(1, BucketMeta { nonce: 42, capacity: 1024, load: 512 });
