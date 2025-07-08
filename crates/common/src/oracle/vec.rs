@@ -1100,7 +1100,7 @@ pub(crate) mod test_salt_vec_oracle {
     async fn test_salt_oracle_insert_and_get_blockwitness() {
         // 创建测试用的 BlockWitness 数据
         let witness = WitnessStatus {
-            status: SaltWitnessState::Idle,
+            status: SaltWitnessState::Witnessed,
             block_hash: Default::default(),
             block_number: 8,
             lock_time: 0,
@@ -1126,7 +1126,7 @@ pub(crate) mod test_salt_vec_oracle {
 
         // 反序列化并验证数据完整性
         let deserialized: WitnessStatus = bincode::deserialize(&retrieved_data).unwrap();
-        assert_eq!(deserialized.status, SaltWitnessState::Idle);
+        assert_eq!(deserialized.status, SaltWitnessState::Witnessed);
         assert_eq!(deserialized.block_number, 8);
         assert_eq!(deserialized.blob_ids, vec![[0x00; 32], [0x01; 32]]);
         assert_eq!(deserialized.witness_data, vec![1, 2, 3, 4]);
@@ -1149,7 +1149,7 @@ pub(crate) mod test_salt_vec_oracle {
 
         // 插入多个 BlockWitness
         let witness1 = WitnessStatus {
-            status: SaltWitnessState::Idle,
+            status: SaltWitnessState::Witnessed,
             block_hash: Default::default(),
             block_number: 8,
             lock_time: 0,
@@ -1157,7 +1157,7 @@ pub(crate) mod test_salt_vec_oracle {
             witness_data: vec![1, 2, 3, 4],
         };
         let witness2 = WitnessStatus {
-            status: SaltWitnessState::Idle,
+            status: SaltWitnessState::Witnessed,
             block_hash: Default::default(),
             block_number: 9,
             lock_time: 0,
