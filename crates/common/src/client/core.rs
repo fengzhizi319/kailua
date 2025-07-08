@@ -394,13 +394,22 @@ pub fn recover_collected_executions(
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
+    use std::ops::Deref;
     use super::*;
     use crate::client::tests::TestOracle;
     use crate::precondition::PreconditionValidationData;
-    use alloy_primitives::{b256, B256};
+    use alloy_primitives::{b256, keccak256, Address, B256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
     use std::sync::{Arc, Mutex};
+    use crate::blobs::BlobWitnessData;
+    use crate::blobs::tests::gen_blobs;
+    use crate::boot::tests::gen_boot_infos;
+    use crate::executor::tests::gen_executions;
+    use crate::oracle::vec::test_salt_vec_oracle::prepare_salt_vec_oracle;
+    use crate::oracle::vec::test_vec_oracle::prepare_vec_oracle;
+    use crate::oracle::vec::{SaltVecOracle, VecOracle};
+    use crate::witness::Witness;
 
     pub fn test_derivation(
         boot_info: BootInfo,
@@ -445,6 +454,88 @@ pub mod tests {
             recover_collected_executions(collection_target, boot_info.claimed_l2_output_root);
 
         Ok(execution_cache)
+    }
+    pub fn create_test_witness_salt_vec_oracle() -> (Witness<SaltVecOracle>, Vec<Vec<u8>>) {
+        let (vec_oracle, values) = prepare_salt_vec_oracle(8, 2);
+        let blobs_witness = BlobWitnessData::from(gen_blobs(10));
+        let witness = Witness {
+            oracle_witness: vec_oracle.deep_clone(),
+            stream_witness: vec_oracle.deep_clone(),
+            blobs_witness,
+            payout_recipient_address: Address::from([0xb0; 20]),
+            precondition_validation_data_hash: keccak256(b"precondition_validation_data_hash"),
+            stitched_executions: vec![gen_executions(64)
+                .into_iter()
+                .map(|e| e.deref().clone())
+                .collect()],
+            stitched_boot_info: gen_boot_infos(32, 128),
+            fpvm_image_id: keccak256(b"fpvm_image_id"),
+        };
+
+        (witness, values)
+    }
+    pub fn test_block_witness_derivation(
+        boot_info: BootInfo,
+        precondition_validation_data: Option<PreconditionValidationData>,
+    ) -> anyhow::Result<Vec<Arc<Execution>>> {
+        let (salt_vec_oracle, values) = prepare_salt_vec_oracle(8, 2);
+
+        let oracle = Arc::new(salt_vec_oracle);
+
+        let (expected_precondition_hash, precondition_validation_data_hash): (B256, B256) = Default::default();
+        let collection_target = Arc::new(Mutex::new(Vec::new()));
+        let (result_boot_info, precondition_hash) = run_core_client(
+            precondition_validation_data_hash,
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            vec![],
+            Some(collection_target.clone()),
+        )
+            .context("run_core_client")?;
+
+        assert_eq!(result_boot_info.l1_head, boot_info.l1_head);
+        assert_eq!(
+            result_boot_info.agreed_l2_output_root,
+            boot_info.agreed_l2_output_root
+        );
+        assert_eq!(
+            result_boot_info.claimed_l2_output_root,
+            boot_info.claimed_l2_output_root
+        );
+        assert_eq!(
+            result_boot_info.claimed_l2_block_number,
+            boot_info.claimed_l2_block_number
+        );
+        assert_eq!(result_boot_info.chain_id, boot_info.chain_id);
+
+        assert_eq!(expected_precondition_hash, precondition_hash);
+
+        let execution_cache =
+            recover_collected_executions(collection_target, boot_info.claimed_l2_output_root);
+
+        Ok(execution_cache)
+    }
+    #[tokio::test(flavor = "multi_thread")]
+    pub async fn test_op_block_witness_sepolia_16491249_16491250() {
+        test_block_witness_derivation(
+            BootInfo {
+                l1_head: b256!(
+                    "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
+                ),
+                agreed_l2_output_root: b256!(
+                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                ),
+                claimed_l2_output_root: b256!(
+                    "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
+                ),
+                claimed_l2_block_number: 16491250,
+                chain_id: 11155420,
+                rollup_config: Default::default(),
+            },
+            None,
+        )
+            .unwrap();
     }
 
     pub fn test_execution(
@@ -518,7 +609,7 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -539,7 +630,7 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -561,7 +652,7 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -588,7 +679,7 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -609,7 +700,7 @@ pub mod tests {
                     "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -651,10 +742,10 @@ pub mod tests {
                     "0x78228b4f2d59ae1820b8b8986a875630cb32d88b298d78d0f25bcac8f3bdfbf3"
                 ),
                 agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                    "0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,

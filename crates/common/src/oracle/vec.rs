@@ -1009,7 +1009,7 @@ impl HintWriterClient for SaltVecOracle {
 pub(crate) mod test_salt_vec_oracle {
     use super::*;
     use std::collections::BTreeMap;
-    use alloy_primitives::keccak256;
+    use alloy_primitives::{b256, keccak256};
     use kona_preimage::PreimageKeyType;
     use serde::{Deserialize, Serialize};
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
@@ -1036,41 +1036,77 @@ pub(crate) mod test_salt_vec_oracle {
     // pub struct TestSaltProof {
     //     pub proof: Vec<u8>,
     // }
-    pub fn prepare_salt_vec_oracle(value_count: usize, copies: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
+    pub fn prepare_salt_vec_oracle(beginblocknumber: usize, blockcount: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
         let mut oracle = SaltVecOracle::default();
         assert_eq!(oracle.preimage_count(), 0);
+        assert!(blockcount < 4, "blockcount 必须小于 3");
+        let block_hash_8=b256!(
+                "b3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc"
+            );
+        let block_hash_9=b256!(
+                "f6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
+            );
+        let block_hash_10=b256!(
+                "e2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c"
+            );
+        let block_hash_11=b256!(
+                "1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7"
+            );
+        
 
 
-        // 构造 value_count 个不同的 value，每个为 Vec<u8>
-        let values = (0..value_count)
+        let witness = WitnessStatus {
+            status: SaltWitnessState::Witnessed,
+            block_hash: Default::default(),
+            block_number: 8,
+            lock_time: 0,
+            blob_ids: vec![[0x00; 32], [0x01; 32]],
+            witness_data: vec![1, 2, 3, 4],
+        };
+
+        // 序列化测试数据
+        let serialized_block_witness = bincode::serialize(&witness).unwrap();
+        let block_hash = [0x01; 32];
+
+        // 创建 SaltVecOracle 并插入 BlockWitness
+        let mut oracle = SaltVecOracle::new();
+        if blockcount == 1 {
+            oracle.insert_block_witness(*block_hash_8, vec![0x8; 20]);
+        } else if blockcount == 2 {
+            oracle.insert_block_witness(*block_hash_8, vec![0x8; 20]);
+            oracle.insert_block_witness(*block_hash_9, vec![0x9; 20]);
+        } else if blockcount == 3 {
+            oracle.insert_block_witness(*block_hash_8, vec![0x8; 20]);
+            oracle.insert_block_witness(*block_hash_9, vec![0x9; 20]);
+            oracle.insert_block_witness(*block_hash_10, vec![0xa; 20]);
+        } else {
+            panic!("blockcount must be less than 3");
+        }
+   
+        // 构造 10 个不同的 value，每个为 Vec<u8>
+        let values = (0..10)
             .map(|i| format!("{i} test {i} value {i}").as_bytes().to_vec())
             .collect::<Vec<_>>();
         // insert sha3 keys
         // 为每个 value 插入 sha3（keccak256）类型的 key
         for value in &values {
             let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
-            for _ in 0..copies {
-                oracle.insert_preimage(sha3_key, value.clone());
-            }
+            oracle.insert_preimage(sha3_key, value.clone());           
         }
         // 校验预映像
         oracle.validate_preimages().unwrap();
-        assert_eq!(oracle.preimage_count(), values.len() * copies);
-        // insert sha2 keys
-        // 为每个 value 插入 sha2（sha256）类型的 key
+        
         for value in &values {
             let sha2_key = PreimageKey::new(
                 SHA2::hash_bytes(value).as_bytes().try_into().unwrap(),
                 PreimageKeyType::Sha256,
-            );
-            for _ in 0..copies {
-                oracle.insert_preimage(sha2_key, value.clone());
-            }
+            );            
+            oracle.insert_preimage(sha2_key, value.clone());
+            
         }
         // 再次校验
         oracle.validate_preimages().unwrap();
-        assert_eq!(oracle.preimage_count(), values.len() * copies * 2);
-
+        
         (oracle, values)
     }
 

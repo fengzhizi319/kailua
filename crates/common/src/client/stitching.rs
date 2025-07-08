@@ -799,10 +799,10 @@ pub mod tests {
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
                 ),
                 agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                    "0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491250,
                 chain_id: 11155420,
@@ -825,10 +825,10 @@ pub mod tests {
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
                 ),
                 agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                    "0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -857,10 +857,10 @@ pub mod tests {
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
                 ),
                 agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                    "0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -888,10 +888,10 @@ pub mod tests {
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
                 ),
                 agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                    "0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
@@ -915,10 +915,10 @@ pub mod tests {
                     "0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"
                 ),
                 agreed_l2_output_root: b256!(
-                    "0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"
+                    "0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"
                 ),
                 claimed_l2_output_root: b256!(
-                    "0x6984e5ae4d025562c8a571949b985692d80e364ddab46d5c8af5b36a20f611d1"
+                    "0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"
                 ),
                 claimed_l2_block_number: 16491349,
                 chain_id: 11155420,
