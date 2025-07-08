@@ -407,8 +407,7 @@ pub mod tests {
     use crate::boot::tests::gen_boot_infos;
     use crate::executor::tests::gen_executions;
     use crate::oracle::vec::test_salt_vec_oracle::prepare_salt_vec_oracle;
-    use crate::oracle::vec::test_vec_oracle::prepare_vec_oracle;
-    use crate::oracle::vec::{SaltVecOracle, VecOracle};
+    use crate::oracle::vec::{SaltVecOracle};
     use crate::witness::Witness;
 
     pub fn test_derivation(
@@ -474,6 +473,53 @@ pub mod tests {
 
         (witness, values)
     }
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_block_witness_derivation_ut() {
+        use crate::oracle::vec::test_salt_vec_oracle::prepare_salt_vec_oracle;
+        use crate::client::core::run_core_client;
+        // use crate::oracle::vec::SaltVecOracle;
+        use alloy_primitives::b256;
+        use kona_proof::BootInfo;
+        use std::sync::{Arc};
+        use kona_proof::l1::OracleBlobProvider;
+
+        // 构造 boot_info
+        let boot_info = BootInfo {
+            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
+            agreed_l2_output_root: b256!("0x82da7204148ba4d8d59e587b6b3fdde5561dc31d9e726220f7974bf9f2158d75"),
+            claimed_l2_output_root: b256!("0xa130fbfa315391b28668609252e4c09c3df3b77562281b996af30bf056cbb2c1"),
+            claimed_l2_block_number: 16491250,
+            chain_id: 11155420,
+            rollup_config: Default::default(),
+        };
+
+        // 构造 SaltVecOracle
+        let (salt_vec_oracle, _values) = prepare_salt_vec_oracle(8, 2);
+        let oracle = Arc::new(salt_vec_oracle);
+
+        // 调用 run_core_client
+        let result = run_core_client(
+            Default::default(),
+            oracle.clone(),
+            oracle.clone(),
+            OracleBlobProvider::new(oracle.clone()),
+            vec![],
+            None,
+        );
+        //assert!(result.is_ok());
+
+        // 检查 blockwitness 读取和内容正确性
+        let block_hashes = [
+            b256!("b3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc"),
+            b256!("f6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"),
+        ];
+        for (i, &block_hash) in block_hashes.iter().enumerate() {
+            let data = oracle.get_block_witness(*block_hash).await.unwrap();
+            let expected = vec![0x8 + i as u8; 20];
+            assert_eq!(data, expected, "blockwitness 数据不一致");
+        }
+    }
+
     pub fn test_block_witness_derivation(
         boot_info: BootInfo,
         precondition_validation_data: Option<PreconditionValidationData>,
@@ -516,6 +562,8 @@ pub mod tests {
 
         Ok(execution_cache)
     }
+
+
     #[tokio::test(flavor = "multi_thread")]
     pub async fn test_op_block_witness_sepolia_16491249_16491250() {
         test_block_witness_derivation(
