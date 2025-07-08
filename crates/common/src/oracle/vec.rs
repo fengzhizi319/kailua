@@ -866,7 +866,10 @@ pub struct WitnessStatus {
     /// restore the block witness status
     pub status: SaltWitnessState,
     /// restore the block hash
+    //9:0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61
+    //10:0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00
     pub block_hash: BlockHash,
+
     /// restore the block number
     pub block_number: BlockNumber,
     /// locking the task brefore the timeout
