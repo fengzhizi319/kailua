@@ -1135,6 +1135,44 @@ pub(crate) mod test_salt_vec_oracle {
             initial_size - 2 * copies * values.len()
         );
     }
+
+    #[tokio::test]
+    async fn test_prepare_salt_vec_oracle_basic() {
+        // 构造一个包含2个区块的oracle和测试数据
+        let (oracle, values) = prepare_salt_vec_oracle(8, 2);
+        // 校验oracle中预映像数量（2个blockwitness + 10个sha3 + 10个sha2）
+        assert_eq!(oracle.preimage_count(), 2 + 10 + 10);
+
+        // 检查能否正确获取插入的sha3和sha2值
+        use alloy_primitives::keccak256;
+        use kona_preimage::{PreimageKey, PreimageKeyType};
+        use risc0_zkvm::sha::Impl as SHA2;
+
+        for value in &values {
+            let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
+            let sha2_key = PreimageKey::new(
+                SHA2::hash_bytes(value).as_bytes().try_into().unwrap(),
+                PreimageKeyType::Sha256,
+            );
+            let v1 = oracle.get(sha3_key).await.unwrap();
+            let v2 = oracle.get(sha2_key).await.unwrap();
+            assert_eq!(v1, *value);
+            assert_eq!(v2, *value);
+        }
+
+        // 检查 blockwitness 读取和内容正确性
+        use alloy_primitives::b256;
+        let block_hashes = [
+            b256!("b3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc"),
+            b256!("f6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"),
+        ];
+        for (i, &block_hash) in block_hashes.iter().enumerate() {
+            let data = oracle.get_block_witness(*block_hash).await.unwrap();
+            // 这里我们知道插入的是 vec![0x8; 20] 或 vec![0x9; 20]
+            let expected = vec![0x8 + i as u8; 20];
+            assert_eq!(data, expected);
+        }
+    }
     #[tokio::test]
     async fn test_salt_oracle_insert_and_get_blockwitness() {
         // 创建测试用的 BlockWitness 数据
