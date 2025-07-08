@@ -497,7 +497,7 @@ pub mod tests {
         // 构造 SaltVecOracle
         let (mut salt_vec_oracle, _values) = prepare_salt_vec_oracle(8, 2);
         // boot_info.write(&salt_vec_oracle).unwrap(); // TODO: Fix this call
-        salt_vec_oracle.write_boot_info(boot_info.clone()).await.unwrap();
+        salt_vec_oracle.insert_boot_info(boot_info.clone()).await.unwrap();
 
 
         let oracle = Arc::new(salt_vec_oracle);

@@ -15,12 +15,13 @@
 use crate::client::log;
 use crate::oracle::WitnessOracle;
 use crate::oracle::{needs_validation, validate_preimage};
+use crate::precondition::PreconditionValidationData;
 use crate::rkyv::vec::PreimageVecStoreRkyv;
 use alloy_primitives::map::HashMap;
 use anyhow::bail;
 use async_trait::async_trait;
 use kona_preimage::errors::PreimageOracleResult;
-use kona_preimage::{HintWriterClient, PreimageKey, PreimageOracleClient};
+use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
 use kona_proof::{BootInfo, FlushableCache};
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
@@ -170,6 +171,45 @@ impl VecOracle {
             }
         }
         Ok(())
+    }
+
+    /// Inserts precondition validation data into the oracle.
+    ///
+    /// This method stores the given `key` and `value` as a precondition validation data entry.
+    /// The `preimages` collection is thread-safe through the use of a mutex.
+    ///
+    /// # Parameters
+    ///
+    /// - `key`: A `PreimageKey` representing the identifier for the precondition validation data.
+    /// - `value`: A `Vec<u8>` containing the data associated with the precondition validation.
+    ///
+    /// # Behavior
+    ///
+    /// - The precondition validation data (a tuple of `key`, `value`, and `None`) is appended to the last
+    ///   vector inside the `preimages` collection.
+    /// - If the `preimages` collection is empty, a new inner vector is initialized before
+    ///   the insertion takes place.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if:
+    /// - The `validate_preimage` function determines that the provided `key` and `value`
+    ///   are invalid.
+    /// - The mutex guarding the `preimages` collection is poisoned (i.e., another thread
+    ///   panicked while holding the lock).
+    ///
+    /// Notes:
+    /// - Ensure that the provided `key` and `value` adhere to the expected format, as
+    ///   enforced by `validate_preimage`.
+    /// - This method is not thread-safe on its own, so ensure that concurrent access
+    ///   to the containing structure is properly synchronized if needed.
+    pub fn insert_precondition_validation_data(&mut self, key: PreimageKey, value: Vec<u8>) {
+        validate_preimage(&key, &value).expect("Attempted to save invalid preimage");
+        let mut preimages = self.preimages.lock().unwrap();
+        if preimages.is_empty() {
+            preimages.push(Vec::new());
+        }
+        preimages.last_mut().unwrap().push((key, value, None));
     }
 }
 
@@ -910,6 +950,59 @@ impl SaltVecOracle {
         }
     }
 
+    /// Inserts a PreconditionValidationData into the oracle.
+    ///
+    /// This method serializes the PreconditionValidationData using pot serialization,
+    /// creates a SHA256 hash as the key, and stores it in the oracle.
+    ///
+    /// # Arguments
+    /// * `precondition_data` - The PreconditionValidationData to store
+    ///
+    /// # Returns
+    /// * `B256` - The hash key that was generated and used for storage
+    pub fn insert_precondition_validation_data(&mut self, precondition_data: PreconditionValidationData) -> B256 {
+        // 序列化 PreconditionValidationData
+        let serialized_data = precondition_data.to_vec();
+
+        // 计算数据的哈希作为 key
+        let data_hash = precondition_data.hash();
+
+        // 创建 PreimageKey
+        let preimage_key = PreimageKey::new(*data_hash, PreimageKeyType::Sha256);
+
+        // 存储到 oracle 中
+        self.insert_preimage(preimage_key, serialized_data);
+
+        data_hash
+    }
+
+    /// Retrieves a PreconditionValidationData from the oracle.
+    ///
+    /// # Arguments
+    /// * `precondition_data_hash` - The hash of the PreconditionValidationData to retrieve
+    ///
+    /// # Returns
+    /// * `Option<PreconditionValidationData>` - The deserialized PreconditionValidationData if found, None otherwise
+    pub async fn get_precondition_validation_data(&self, precondition_data_hash: B256) -> Option<PreconditionValidationData> {
+        // 如果是零哈希，直接返回 None
+        if precondition_data_hash.is_zero() {
+            return None;
+        }
+
+        // 创建 PreimageKey
+        let preimage_key = PreimageKey::new(*precondition_data_hash, PreimageKeyType::Sha256);
+
+        // 从 oracle 获取数据
+        if let Ok(serialized_data) = self.get(preimage_key).await {
+            // 反序列化数据
+            if let Ok(precondition_data) = pot::from_slice::<PreconditionValidationData>(&serialized_data) {
+                return Some(precondition_data);
+            }
+        }
+
+        None
+    }
+
     /// Inserts a BlockWitness into the oracle.
     ///
     /// # Arguments
@@ -955,7 +1048,7 @@ impl SaltVecOracle {
         Ok(())
     }
     /// 将 BootInfo 写入 preimage oracle
-    pub async fn write_boot_info(&mut self, boot_info: BootInfo) -> Result<(), OracleProviderError> {
+    pub async fn insert_boot_info(&mut self, boot_info: BootInfo) -> Result<(), OracleProviderError> {
         let mut preimages = self.preimages.lock().unwrap();
         preimages.insert(PreimageKey::new_local(L1_HEAD_KEY.to()), boot_info.l1_head.0.to_vec());
 
@@ -1354,7 +1447,7 @@ pub(crate) mod test_salt_vec_oracle {
         };
 
         // 测试写入 BootInfo
-        let write_result = oracle.write_boot_info(test_boot_info.clone()).await;
+        let write_result = oracle.insert_boot_info(test_boot_info.clone()).await;
         assert!(write_result.is_ok(), "Failed to write BootInfo: {:?}", write_result);
 
         // 验证写入后预映像数量增加了（应该有6个key：l1_head, agreed_l2_output_root, claimed_l2_output_root, claimed_l2_block_number, chain_id, rollup_config）
@@ -1366,7 +1459,7 @@ pub(crate) mod test_salt_vec_oracle {
 
         let loaded_boot_info = loaded_boot_info.unwrap();
 
-        // 验证加载的数据与原始��据一致
+        // 验证加载的数据与原始数据一致
         assert_eq!(loaded_boot_info.l1_head, test_boot_info.l1_head);
         assert_eq!(loaded_boot_info.agreed_l2_output_root, test_boot_info.agreed_l2_output_root);
         assert_eq!(loaded_boot_info.claimed_l2_output_root, test_boot_info.claimed_l2_output_root);
@@ -1526,14 +1619,14 @@ pub(crate) mod test_salt_vec_oracle {
         };
 
         // 第一次写入和加载
-        oracle.write_boot_info(boot_info1.clone()).await.unwrap();
+        oracle.insert_boot_info(boot_info1.clone()).await.unwrap();
         let loaded1 = oracle.load_boot_info().await.unwrap();
         assert_eq!(loaded1.l1_head, boot_info1.l1_head);
         assert_eq!(loaded1.claimed_l2_block_number, boot_info1.claimed_l2_block_number);
         assert_eq!(loaded1.chain_id, boot_info1.chain_id);
 
         // 第二次写入（覆盖）和加载
-        oracle.write_boot_info(boot_info2.clone()).await.unwrap();
+        oracle.insert_boot_info(boot_info2.clone()).await.unwrap();
         let loaded2 = oracle.load_boot_info().await.unwrap();
         assert_eq!(loaded2.l1_head, boot_info2.l1_head);
         assert_eq!(loaded2.claimed_l2_block_number, boot_info2.claimed_l2_block_number);
@@ -1544,4 +1637,252 @@ pub(crate) mod test_salt_vec_oracle {
         assert_ne!(loaded2.claimed_l2_block_number, boot_info1.claimed_l2_block_number);
     }
 
+    #[tokio::test]
+    async fn test_salt_oracle_insert_and_get_precondition_validation_data() {
+        use crate::blobs::BlobFetchRequest;
+        use alloy_eips::eip4844::IndexedBlobHash;
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        // 创建测试用的 PreconditionValidationData
+        let blob_hash = IndexedBlobHash {
+            index: 0,
+            hash: b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"),
+        };
+
+        let blob_request = BlobFetchRequest {
+            block_ref: Default::default(),
+            blob_hash,
+        };
+
+        let precondition_data = PreconditionValidationData::Validity {
+            proposal_l2_head_number: 100,
+            proposal_output_count: 50,
+            output_block_span: 1,
+            blob_hashes: vec![blob_request],
+        };
+
+        // 插入 PreconditionValidationData
+        let data_hash = oracle.insert_precondition_validation_data(precondition_data.clone());
+
+        // 验证插入后的预映像数量增加了
+        assert_eq!(oracle.preimage_count(), 1);
+
+        // 验证返回的哈希与期望的哈希一致
+        let expected_hash = precondition_data.hash();
+        assert_eq!(data_hash, expected_hash);
+
+        // 通过 get_precondition_validation_data 方法读取
+        let retrieved_data = oracle.get_precondition_validation_data(data_hash).await.unwrap();
+        assert_eq!(retrieved_data, precondition_data);
+
+        // 验证各字段是否正确
+        match retrieved_data {
+            PreconditionValidationData::Validity {
+                proposal_l2_head_number,
+                proposal_output_count,
+                output_block_span,
+                blob_hashes,
+            } => {
+                assert_eq!(proposal_l2_head_number, 100);
+                assert_eq!(proposal_output_count, 50);
+                assert_eq!(output_block_span, 1);
+                assert_eq!(blob_hashes.len(), 1);
+                assert_eq!(blob_hashes[0].blob_hash.hash, b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_get_nonexistent_precondition_validation_data() {
+        let oracle = SaltVecOracle::new();
+        let non_existent_hash = b256!("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+        // 尝试获取不存在的 PreconditionValidationData
+        let result = oracle.get_precondition_validation_data(non_existent_hash).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_get_zero_hash_precondition_validation_data() {
+        let oracle = SaltVecOracle::new();
+        let zero_hash = B256::ZERO;
+
+        // 尝试获取零哈希的 PreconditionValidationData，应该直接返回 None
+        let result = oracle.get_precondition_validation_data(zero_hash).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_multiple_precondition_validation_data() {
+        use crate::blobs::BlobFetchRequest;
+        use alloy_eips::eip4844::IndexedBlobHash;
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        // 创建第一个测试数据
+        let blob_hash1 = IndexedBlobHash {
+            index: 0,
+            hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+        };
+        let blob_request1 = BlobFetchRequest {
+            block_ref: Default::default(),
+            blob_hash: blob_hash1,
+        };
+        let precondition_data1 = PreconditionValidationData::Validity {
+            proposal_l2_head_number: 100,
+            proposal_output_count: 50,
+            output_block_span: 1,
+            blob_hashes: vec![blob_request1],
+        };
+
+        // 创建第二个测试数据
+        let blob_hash2 = IndexedBlobHash {
+            index: 1,
+            hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+        };
+        let blob_request2 = BlobFetchRequest {
+            block_ref: Default::default(),
+            blob_hash: blob_hash2,
+        };
+        let precondition_data2 = PreconditionValidationData::Validity {
+            proposal_l2_head_number: 200,
+            proposal_output_count: 75,
+            output_block_span: 2,
+            blob_hashes: vec![blob_request2],
+        };
+
+        // 插入两个 PreconditionValidationData
+        let hash1 = oracle.insert_precondition_validation_data(precondition_data1.clone());
+        let hash2 = oracle.insert_precondition_validation_data(precondition_data2.clone());
+
+        // 验证插入后的预映像数量
+        assert_eq!(oracle.preimage_count(), 2);
+
+        // 验证两个哈希不同
+        assert_ne!(hash1, hash2);
+
+        // 验证可以分别获取
+        let retrieved1 = oracle.get_precondition_validation_data(hash1).await.unwrap();
+        let retrieved2 = oracle.get_precondition_validation_data(hash2).await.unwrap();
+
+        assert_eq!(retrieved1, precondition_data1);
+        assert_eq!(retrieved2, precondition_data2);
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_precondition_validation_data_serialization_roundtrip() {
+        use crate::blobs::BlobFetchRequest;
+        use alloy_eips::eip4844::IndexedBlobHash;
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        // 创建复杂的测试数据（包含多个 blob）
+        let blob_hashes = vec![
+            BlobFetchRequest {
+                block_ref: Default::default(),
+                blob_hash: IndexedBlobHash {
+                    index: 0,
+                    hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+                },
+            },
+            BlobFetchRequest {
+                block_ref: Default::default(),
+                blob_hash: IndexedBlobHash {
+                    index: 1,
+                    hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+                },
+            },
+            BlobFetchRequest {
+                block_ref: Default::default(),
+                blob_hash: IndexedBlobHash {
+                    index: 2,
+                    hash: b256!("3333333333333333333333333333333333333333333333333333333333333333"),
+                },
+            },
+        ];
+
+        let original_data = PreconditionValidationData::Validity {
+            proposal_l2_head_number: 12345,
+            proposal_output_count: 999,
+            output_block_span: 10,
+            blob_hashes,
+        };
+
+        // 测试序列化和反序列化的往返过程
+        let data_hash = oracle.insert_precondition_validation_data(original_data.clone());
+        let retrieved_data = oracle.get_precondition_validation_data(data_hash).await.unwrap();
+
+        // 验证所有字段都正确恢复
+        assert_eq!(retrieved_data, original_data);
+
+        // 验证哈希计算是否一致
+        assert_eq!(data_hash, original_data.hash());
+        assert_eq!(retrieved_data.hash(), original_data.hash());
+
+        // 验证blob数量
+        assert_eq!(retrieved_data.blob_fetch_requests().len(), 3);
+    }
+
+    #[test]
+    fn test_salt_oracle_precondition_validation_data_deep_clone() {
+        use crate::blobs::BlobFetchRequest;
+        use alloy_eips::eip4844::IndexedBlobHash;
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        let blob_request = BlobFetchRequest {
+            block_ref: Default::default(),
+            blob_hash: IndexedBlobHash {
+                index: 0,
+                hash: b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"),
+            },
+        };
+
+        let precondition_data = PreconditionValidationData::Validity {
+            proposal_l2_head_number: 500,
+            proposal_output_count: 100,
+            output_block_span: 5,
+            blob_hashes: vec![blob_request],
+        };
+
+        oracle.insert_precondition_validation_data(precondition_data.clone());
+
+        // 深度克隆
+        let cloned_oracle = oracle.deep_clone();
+        assert_eq!(cloned_oracle.preimage_count(), 1);
+
+        // 验证克隆的 oracle 包含相同的数据
+        let data_hash = precondition_data.hash();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let retrieved = cloned_oracle.get_precondition_validation_data(data_hash).await.unwrap();
+            assert_eq!(retrieved, precondition_data);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_precondition_validation_data_with_empty_blobs() {
+        let mut oracle = SaltVecOracle::new();
+
+        // 创建没有blob的测试数据
+        let precondition_data = PreconditionValidationData::Validity {
+            proposal_l2_head_number: 1000,
+            proposal_output_count: 10,
+            output_block_span: 1,
+            blob_hashes: vec![], // 空的blob列表
+        };
+
+        // 插入和获取
+        let data_hash = oracle.insert_precondition_validation_data(precondition_data.clone());
+        let retrieved_data = oracle.get_precondition_validation_data(data_hash).await.unwrap();
+
+        assert_eq!(retrieved_data, precondition_data);
+        assert_eq!(retrieved_data.blob_fetch_requests().len(), 0);
+    }
+
 }
+
