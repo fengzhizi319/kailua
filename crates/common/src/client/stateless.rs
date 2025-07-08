@@ -90,20 +90,16 @@ pub fn run_stateless_client<O: WitnessOracle>(witness: Witness<O>) -> ProofJourn
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
-    use std::ops::Deref;
     use super::*;
     use crate::client::core::tests::test_derivation;
     use crate::client::tests::TestOracle;
-    use alloy_primitives::{b256, keccak256, Address, B256};
+    use alloy_primitives::{b256, B256};
     use anyhow::Context;
     use kona_proof::BootInfo;
     use crate::blobs::BlobWitnessData;
     use crate::blobs::tests::gen_blobs;
-    use crate::boot::tests::gen_boot_infos;
-    use crate::executor::tests::gen_executions;
-    use crate::oracle::vec::test_vec_oracle::prepare_vec_oracle;
     use crate::oracle::vec::test_salt_vec_oracle::prepare_salt_vec_oracle;
-    use crate::oracle::vec::VecOracle;
+
 
     
     #[test]
