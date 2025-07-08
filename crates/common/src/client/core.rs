@@ -503,7 +503,7 @@ pub mod tests {
         let oracle = Arc::new(salt_vec_oracle);
 
         // 调用 run_core_client
-        let result = run_core_client(
+        let _result = run_core_client(
             Default::default(),
             oracle.clone(),
             oracle.clone(),
@@ -529,7 +529,7 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<PreconditionValidationData>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
-        let (salt_vec_oracle, values) = prepare_salt_vec_oracle(8, 2);
+        let (salt_vec_oracle, _values) = prepare_salt_vec_oracle(8, 2);
 
         let oracle = Arc::new(salt_vec_oracle);
 

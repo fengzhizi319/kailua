@@ -424,7 +424,7 @@ mod test_validate {
         let result = std::panic::catch_unwind(|| validate_preimage(&blob_key, b"test"));
         assert!(result.is_err());
 
-        let blockwitness_key = PreimageKey::new([0u8; 32], PreimageKeyType::Blockwitness);
+        let _blockwitness_key = PreimageKey::new([0u8; 32], PreimageKeyType::Blockwitness);
         let result = std::panic::catch_unwind(|| validate_preimage(&blob_key, b"test"));
         assert!(result.is_err());
     }

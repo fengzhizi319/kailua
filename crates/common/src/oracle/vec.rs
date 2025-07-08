@@ -27,7 +27,6 @@ use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use alloy_primitives::B256;
-use kona_genesis::RollupConfig;
 use kona_proof::boot::{L1_HEAD_KEY, L2_OUTPUT_ROOT_KEY, L2_CLAIM_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CHAIN_ID_KEY, L2_ROLLUP_CONFIG_KEY};
 use kona_proof::errors::OracleProviderError;
 use serde::{Deserialize, Serialize};
@@ -1096,34 +1095,10 @@ impl HintWriterClient for SaltVecOracle {
 #[cfg(test)]
 pub(crate) mod test_salt_vec_oracle {
     use super::*;
-    use std::collections::BTreeMap;
     use alloy_primitives::{b256, keccak256};
     use kona_preimage::PreimageKeyType;
-    use serde::{Deserialize, Serialize};
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
-    // // 测试用的数据结构 - 需要与实际的 BlockWitness 结构匹配
-    //
-    //
-    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    // pub struct TestBucketMeta {
-    //     pub nonce: u64,
-    //     pub capacity: u64,
-    //     pub load: u64,
-    // }
-    //
-    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
-    // pub struct TestSaltKey(pub u64);
-    //
-    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    // pub struct TestSaltValue {
-    //     pub data: Vec<u8>,
-    // }
-    //
-    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    // pub struct TestSaltProof {
-    //     pub proof: Vec<u8>,
-    // }
     pub fn prepare_salt_vec_oracle(beginblocknumber: usize, blockcount: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
         let mut oracle = SaltVecOracle::default();
         assert_eq!(oracle.preimage_count(), 0);
@@ -1137,11 +1112,9 @@ pub(crate) mod test_salt_vec_oracle {
         let block_hash_10=b256!(
                 "e2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c"
             );
-        let block_hash_11=b256!(
-                "1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7"
-            );
-        
-
+        // let block_hash_11=b256!(
+        //         "1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7"
+        //     );
 
         let witness = WitnessStatus {
             status: SaltWitnessState::Witnessed,
@@ -1154,10 +1127,7 @@ pub(crate) mod test_salt_vec_oracle {
 
         // 序列化测试数据
         let serialized_block_witness = bincode::serialize(&witness).unwrap();
-        let block_hash = [0x01; 32];
 
-        // 创建 SaltVecOracle 并插入 BlockWitness
-        let mut oracle = SaltVecOracle::new();
         if blockcount == 1 {
             oracle.insert_block_witness(*block_hash_8, vec![0x8; 20]);
         } else if blockcount == 2 {
