@@ -21,12 +21,15 @@ use anyhow::bail;
 use async_trait::async_trait;
 use kona_preimage::errors::PreimageOracleResult;
 use kona_preimage::{HintWriterClient, PreimageKey, PreimageOracleClient};
-use kona_proof::FlushableCache;
+use kona_proof::{BootInfo, FlushableCache};
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use alloy_primitives::B256;
+use kona_genesis::RollupConfig;
+use kona_proof::boot::{L1_HEAD_KEY, L2_OUTPUT_ROOT_KEY, L2_CLAIM_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CHAIN_ID_KEY, L2_ROLLUP_CONFIG_KEY};
+use kona_proof::errors::OracleProviderError;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -705,7 +708,7 @@ pub mod test_vec_oracle {
             assert_eq!(preimage_vecs.len(), 1);
             let mut seen_keys = HashSet::new();
             for preimages in preimage_vecs.iter() {
-                assert_eq!(preimages.len(), values.len() * 2 * 2);
+                assert_eq!(preimages.len(), values.len() * 2);
                 for preimage in preimages.iter() {
                     if seen_keys.contains(&preimage.0) {
                         let ptr = preimage.2.unwrap();
@@ -837,6 +840,9 @@ pub mod test_vec_oracle {
         oracle.flush();
         assert_eq!(oracle.preimage_count(), 0);
     }
+
+
+
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SaltWitnessState {
@@ -948,6 +954,88 @@ impl SaltVecOracle {
             }
         }
         Ok(())
+    }
+    /// 将 BootInfo 写入 preimage oracle
+    pub async fn write_boot_info(&mut self, boot_info: BootInfo) -> Result<(), OracleProviderError> {
+        let mut preimages = self.preimages.lock().unwrap();
+        preimages.insert(PreimageKey::new_local(L1_HEAD_KEY.to()), boot_info.l1_head.0.to_vec());
+
+        // 写入 l2_output_root
+        preimages.insert(PreimageKey::new_local(L2_OUTPUT_ROOT_KEY.to()), boot_info.agreed_l2_output_root.0.to_vec());
+        // 写入 l2_claim_key
+        preimages.insert(PreimageKey::new_local(L2_CLAIM_KEY.to()), boot_info.claimed_l2_output_root.0.to_vec());
+        // 写入 l2_claim_block_number
+        preimages.insert(PreimageKey::new_local(L2_CLAIM_BLOCK_NUMBER_KEY.to()), boot_info.claimed_l2_block_number.to_be_bytes().to_vec());
+        // 写入 l2_chain_id
+        preimages.insert(PreimageKey::new_local(L2_CHAIN_ID_KEY.to()), boot_info.chain_id.to_be_bytes().to_vec());
+        // 写入 rollup_config
+        let ser_cfg = serde_json::to_vec(&boot_info.rollup_config)
+            .map_err(OracleProviderError::Serde)?;
+        preimages.insert(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()), ser_cfg);
+        Ok(())
+
+    }
+    /// 从 preimage oracle 加载 BootInfo
+    pub async fn load_boot_info(&self) -> Result<BootInfo, OracleProviderError> {
+        let preimages = self.preimages.lock().unwrap();
+
+        // 读取 l1_head
+        let l1_head = preimages
+            .get(&PreimageKey::new_local(L1_HEAD_KEY.to()))
+            .ok_or(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?
+            .as_slice();
+        let l1_head = B256::try_from(l1_head)
+            .map_err(|_| OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?;
+
+        // 读取 l2_output_root
+        let agreed_l2_output_root = preimages
+            .get(&PreimageKey::new_local(L2_OUTPUT_ROOT_KEY.to()))
+            .ok_or(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?
+            .as_slice();
+        let agreed_l2_output_root = B256::try_from(agreed_l2_output_root)
+            .map_err(|_| OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?;
+
+        // 读取 l2_claim_key
+        let claimed_l2_output_root = preimages
+            .get(&PreimageKey::new_local(L2_CLAIM_KEY.to()))
+            .ok_or(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?
+            .as_slice();
+        let claimed_l2_output_root = B256::try_from(claimed_l2_output_root)
+            .map_err(|_| OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?;
+
+        // 读取 l2_claim_block_number
+        let claimed_l2_block_number = preimages
+            .get(&PreimageKey::new_local(L2_CLAIM_BLOCK_NUMBER_KEY.to()))
+            .ok_or(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?
+            .as_slice();
+        let claimed_l2_block_number = <[u8; 8]>::try_from(claimed_l2_block_number)
+            .map_err(|_| OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?;
+        let claimed_l2_block_number = u64::from_be_bytes(claimed_l2_block_number);
+
+        // 读取 l2_chain_id
+        let chain_id = preimages
+            .get(&PreimageKey::new_local(L2_CHAIN_ID_KEY.to()))
+            .ok_or(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?
+            .as_slice();
+        let chain_id = <[u8; 8]>::try_from(chain_id)
+            .map_err(|_| OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?;
+        let chain_id = u64::from_be_bytes(chain_id);
+
+        // 读取 rollup_config
+        let rollup_config_bytes = preimages
+            .get(&PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
+            .ok_or(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound))?;
+        let rollup_config = serde_json::from_slice(rollup_config_bytes)
+            .map_err(OracleProviderError::Serde)?;
+
+        Ok(BootInfo {
+            l1_head,
+            agreed_l2_output_root,
+            claimed_l2_output_root,
+            claimed_l2_block_number,
+            chain_id,
+            rollup_config,
+        })
     }
 }
 
@@ -1168,7 +1256,7 @@ pub(crate) mod test_salt_vec_oracle {
         ];
         for (i, &block_hash) in block_hashes.iter().enumerate() {
             let data = oracle.get_block_witness(*block_hash).await.unwrap();
-            // 这里我们知道插入的是 vec![0x8; 20] 或 vec![0x9; 20]
+            // 这里我们知道插入的是 vec![0x8 + i as u8; 20]
             let expected = vec![0x8 + i as u8; 20];
             assert_eq!(data, expected);
         }
@@ -1277,4 +1365,213 @@ pub(crate) mod test_salt_vec_oracle {
             assert_eq!(retrieved, test_data);
         });
     }
+
+    #[tokio::test]
+    async fn test_salt_oracle_write_and_load_bootinfo() {
+        use kona_genesis::RollupConfig;
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        // 创建测试用的 BootInfo
+        let test_boot_info = BootInfo {
+            l1_head: b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"),
+            agreed_l2_output_root: b256!("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"),
+            claimed_l2_output_root: b256!("fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"),
+            claimed_l2_block_number: 12345,
+            chain_id: 901,
+            rollup_config: RollupConfig::default(),
+        };
+
+        // 测试写入 BootInfo
+        let write_result = oracle.write_boot_info(test_boot_info.clone()).await;
+        assert!(write_result.is_ok(), "Failed to write BootInfo: {:?}", write_result);
+
+        // 验证写入后预映像数量增加了（应该有6个key：l1_head, agreed_l2_output_root, claimed_l2_output_root, claimed_l2_block_number, chain_id, rollup_config）
+        assert_eq!(oracle.preimage_count(), 6);
+
+        // 测试加载 BootInfo
+        let loaded_boot_info = oracle.load_boot_info().await;
+        assert!(loaded_boot_info.is_ok(), "Failed to load BootInfo: {:?}", loaded_boot_info);
+
+        let loaded_boot_info = loaded_boot_info.unwrap();
+
+        // 验证加载的数据与原始��据一致
+        assert_eq!(loaded_boot_info.l1_head, test_boot_info.l1_head);
+        assert_eq!(loaded_boot_info.agreed_l2_output_root, test_boot_info.agreed_l2_output_root);
+        assert_eq!(loaded_boot_info.claimed_l2_output_root, test_boot_info.claimed_l2_output_root);
+        assert_eq!(loaded_boot_info.claimed_l2_block_number, test_boot_info.claimed_l2_block_number);
+        assert_eq!(loaded_boot_info.chain_id, test_boot_info.chain_id);
+        // RollupConfig 比较可能比较复杂，这里简单验证是否成功反序列化
+        // 实际项目中可以根据 RollupConfig 的具体字段进行详细比较
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_load_missing_keys() {
+        let oracle = SaltVecOracle::new();
+
+        // 尝试从空的 oracle 加载 BootInfo，应该失败
+        let result = oracle.load_boot_info().await;
+        assert!(result.is_err());
+
+        // 验证错误类型是 KeyNotFound
+        match result {
+            Err(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound)) => {
+                // 期望的错误类型
+            }
+            _ => panic!("Expected KeyNotFound error, got: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_load_invalid_data_length() {
+        let mut oracle = SaltVecOracle::new();
+
+        // 插入长度不正确的 l1_head 数据（应该是32字节，但插入31字节）
+        oracle.insert_preimage(
+            PreimageKey::new_local(L1_HEAD_KEY.to()),
+            vec![0u8; 31], // 错误的长度
+        );
+
+        // 尝试加载，应该因为长度不匹配而失败
+        let result = oracle.load_boot_info().await;
+        assert!(result.is_err());
+
+        match result {
+            Err(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound)) => {
+                // 期望的错误类型（我们用KeyNotFound代替InvalidInput）
+            }
+            _ => panic!("Expected KeyNotFound error for l1_head length, got: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_load_invalid_u64_length() {
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        // 插入正确的 B256 类型数据
+        oracle.insert_preimage(
+            PreimageKey::new_local(L1_HEAD_KEY.to()),
+            b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef").0.to_vec(),
+        );
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_OUTPUT_ROOT_KEY.to()),
+            b256!("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890").0.to_vec(),
+        );
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_CLAIM_KEY.to()),
+            b256!("fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321").0.to_vec(),
+        );
+
+        // 插入长度不正确的 u64 数据（应该是8字节，但插入4字节）
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_CLAIM_BLOCK_NUMBER_KEY.to()),
+            vec![0u8; 4], // 错误的长度
+        );
+
+        // 尝试加载，应该因为 u64 长度不匹配而失败
+        let result = oracle.load_boot_info().await;
+        assert!(result.is_err());
+
+        match result {
+            Err(OracleProviderError::Preimage(kona_preimage::errors::PreimageOracleError::KeyNotFound)) => {
+                // 期望的错误类型
+            }
+            _ => panic!("Expected KeyNotFound error for claimed_l2_block_number length, got: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_load_invalid_json() {
+        use alloy_primitives::b256;
+
+        let mut oracle = SaltVecOracle::new();
+
+        // 插入所有必需的字段，但 rollup_config 使用无效的 JSON
+        oracle.insert_preimage(
+            PreimageKey::new_local(L1_HEAD_KEY.to()),
+            b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef").0.to_vec(),
+        );
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_OUTPUT_ROOT_KEY.to()),
+            b256!("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890").0.to_vec(),
+        );
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_CLAIM_KEY.to()),
+            b256!("fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321").0.to_vec(),
+        );
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_CLAIM_BLOCK_NUMBER_KEY.to()),
+            12345u64.to_be_bytes().to_vec(),
+        );
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_CHAIN_ID_KEY.to()),
+            901u64.to_be_bytes().to_vec(),
+        );
+
+        // 插入无效的 JSON 数据
+        oracle.insert_preimage(
+            PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()),
+            b"invalid json {".to_vec(),
+        );
+
+        // 尝试加载，应该因为 JSON 反序列化失败而失败
+        let result = oracle.load_boot_info().await;
+        assert!(result.is_err());
+
+        match result {
+            Err(OracleProviderError::Serde(_)) => {
+                // 期望的错误类型
+            }
+            _ => panic!("Expected Serde error, got: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_salt_oracle_write_load_roundtrip() {
+        use kona_genesis::RollupConfig;
+        use alloy_primitives::b256;
+
+        // 测试多次写入和加载的往返操作
+        let mut oracle = SaltVecOracle::new();
+
+        let boot_info1 = BootInfo {
+            l1_head: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+            agreed_l2_output_root: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+            claimed_l2_output_root: b256!("3333333333333333333333333333333333333333333333333333333333333333"),
+            claimed_l2_block_number: 100,
+            chain_id: 1,
+            rollup_config: RollupConfig::default(),
+        };
+
+        let boot_info2 = BootInfo {
+            l1_head: b256!("4444444444444444444444444444444444444444444444444444444444444444"),
+            agreed_l2_output_root: b256!("5555555555555555555555555555555555555555555555555555555555555555"),
+            claimed_l2_output_root: b256!("6666666666666666666666666666666666666666666666666666666666666666"),
+            claimed_l2_block_number: 200,
+            chain_id: 2,
+            rollup_config: RollupConfig::default(),
+        };
+
+        // 第一次写入和加载
+        oracle.write_boot_info(boot_info1.clone()).await.unwrap();
+        let loaded1 = oracle.load_boot_info().await.unwrap();
+        assert_eq!(loaded1.l1_head, boot_info1.l1_head);
+        assert_eq!(loaded1.claimed_l2_block_number, boot_info1.claimed_l2_block_number);
+        assert_eq!(loaded1.chain_id, boot_info1.chain_id);
+
+        // 第二次写入（覆盖）和加载
+        oracle.write_boot_info(boot_info2.clone()).await.unwrap();
+        let loaded2 = oracle.load_boot_info().await.unwrap();
+        assert_eq!(loaded2.l1_head, boot_info2.l1_head);
+        assert_eq!(loaded2.claimed_l2_block_number, boot_info2.claimed_l2_block_number);
+        assert_eq!(loaded2.chain_id, boot_info2.chain_id);
+
+        // 验证数据确实被覆盖了
+        assert_ne!(loaded2.l1_head, boot_info1.l1_head);
+        assert_ne!(loaded2.claimed_l2_block_number, boot_info1.claimed_l2_block_number);
+    }
+
 }

@@ -2168,6 +2168,7 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_bytes",
+ "serde_json",
  "spin 0.10.0",
  "tracing",
 ]

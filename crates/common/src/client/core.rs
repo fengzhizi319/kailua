@@ -493,9 +493,14 @@ pub mod tests {
             rollup_config: Default::default(),
         };
 
+
         // 构造 SaltVecOracle
         let (salt_vec_oracle, _values) = prepare_salt_vec_oracle(8, 2);
+        // boot_info.write(&salt_vec_oracle).unwrap(); // TODO: Fix this call
+
+
         let oracle = Arc::new(salt_vec_oracle);
+
 
         // 调用 run_core_client
         let result = run_core_client(
