@@ -1011,28 +1011,28 @@ pub(crate) mod test_salt_vec_oracle {
     use serde::{Deserialize, Serialize};
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
-    // 测试用的数据结构 - 需要与实际的 BlockWitness 结构匹配
-
-
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    pub struct TestBucketMeta {
-        pub nonce: u64,
-        pub capacity: u64,
-        pub load: u64,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
-    pub struct TestSaltKey(pub u64);
-
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    pub struct TestSaltValue {
-        pub data: Vec<u8>,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    pub struct TestSaltProof {
-        pub proof: Vec<u8>,
-    }
+    // // 测试用的数据结构 - 需要与实际的 BlockWitness 结构匹配
+    //
+    //
+    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    // pub struct TestBucketMeta {
+    //     pub nonce: u64,
+    //     pub capacity: u64,
+    //     pub load: u64,
+    // }
+    //
+    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    // pub struct TestSaltKey(pub u64);
+    //
+    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    // pub struct TestSaltValue {
+    //     pub data: Vec<u8>,
+    // }
+    //
+    // #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    // pub struct TestSaltProof {
+    //     pub proof: Vec<u8>,
+    // }
     pub fn prepare_salt_vec_oracle(value_count: usize, copies: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
         let mut oracle = SaltVecOracle::default();
         assert_eq!(oracle.preimage_count(), 0);
@@ -1099,14 +1099,6 @@ pub(crate) mod test_salt_vec_oracle {
     #[tokio::test]
     async fn test_salt_oracle_insert_and_get_blockwitness() {
         // 创建测试用的 BlockWitness 数据
-        let mut metas = BTreeMap::new();
-        metas.insert(1, TestBucketMeta { nonce: 42, capacity: 1024, load: 512 });
-        metas.insert(2, TestBucketMeta { nonce: 99, capacity: 2048, load: 1024 });
-
-        let mut kvs = BTreeMap::new();
-        kvs.insert(TestSaltKey(123), Some(TestSaltValue { data: vec![0xAA; 94] }));
-        kvs.insert(TestSaltKey(456), Some(TestSaltValue { data: vec![0xBB; 94] }));
-
         let witness = WitnessStatus {
             status: SaltWitnessState::Idle,
             block_hash: Default::default(),
