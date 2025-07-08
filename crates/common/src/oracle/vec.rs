@@ -26,6 +26,8 @@ use lazy_static::lazy_static;
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
+use alloy_primitives::B256;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 /// A type alias representing an indexed preimage.
@@ -836,6 +838,44 @@ pub mod test_vec_oracle {
         assert_eq!(oracle.preimage_count(), 0);
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SaltWitnessState {
+    /// Idle state, no processing
+    Idle,
+    /// Processing state, the block witness is being generated
+    Processing,
+    /// Witnessed state, the block witness has been generated
+    Witnessed,
+    /// Uploading state, the block witness is being uploaded Step 1
+    UploadingStep1,
+    /// Uploading state, the block witness is being uploaded Step 2
+    UploadingStep2,
+    /// Completed state, the block witness has been uploaded successfully
+    Completed,
+}
+/// A block hash.
+pub type BlockHash = B256;
+
+/// A block number.
+pub type BlockNumber = u64;
+
+/// A block timestamp.
+pub type BlockTimestamp = u64;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WitnessStatus {
+    /// restore the block witness status
+    pub status: SaltWitnessState,
+    /// restore the block hash
+    pub block_hash: BlockHash,
+    /// restore the block number
+    pub block_number: BlockNumber,
+    /// locking the task brefore the timeout
+    pub lock_time: u64,
+    /// record the blob ids
+    pub blob_ids: Vec<[u8; 32]>,
+    /// record the block witness data with bytes
+    pub witness_data: Vec<u8>,
+}
 /// A structure representing a salt-based oracle for storing preimages with specialized BlockWitness support.
 ///
 /// This struct provides functionality similar to VecOracle but with additional methods
@@ -972,12 +1012,7 @@ pub(crate) mod test_salt_vec_oracle {
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
 
     // 测试用的数据结构 - 需要与实际的 BlockWitness 结构匹配
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    pub struct TestBlockWitness {
-        pub metas: BTreeMap<u64, TestBucketMeta>,
-        pub kvs: BTreeMap<TestSaltKey, Option<TestSaltValue>>,
-        pub proof: TestSaltProof,
-    }
+
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub struct TestBucketMeta {
@@ -1072,10 +1107,13 @@ pub(crate) mod test_salt_vec_oracle {
         kvs.insert(TestSaltKey(123), Some(TestSaltValue { data: vec![0xAA; 94] }));
         kvs.insert(TestSaltKey(456), Some(TestSaltValue { data: vec![0xBB; 94] }));
 
-        let witness = TestBlockWitness {
-            metas,
-            kvs,
-            proof: TestSaltProof { proof: vec![0x11, 0x22, 0x33, 0x44] },
+        let witness = WitnessStatus {
+            status: SaltWitnessState::Idle,
+            block_hash: Default::default(),
+            block_number: 8,
+            lock_time: 0,
+            blob_ids: vec![[0x00; 32], [0x01; 32]],
+            witness_data: vec![1, 2, 3, 4],
         };
 
         // 序列化测试数据
@@ -1095,12 +1133,12 @@ pub(crate) mod test_salt_vec_oracle {
         assert_eq!(retrieved_data, serialized_block_witness);
 
         // 反序列化并验证数据完整性
-        let deserialized: TestBlockWitness = bincode::deserialize(&retrieved_data).unwrap();
-        assert_eq!(deserialized.metas.len(), 2);
-        assert_eq!(deserialized.kvs.len(), 2);
-        assert_eq!(deserialized.proof.proof, vec![0x11, 0x22, 0x33, 0x44]);
-        assert_eq!(deserialized.metas.get(&1).unwrap().nonce, 42);
-        assert_eq!(deserialized.kvs.get(&TestSaltKey(123)).unwrap().as_ref().unwrap().data, [0xAA; 94]);
+        let deserialized: WitnessStatus = bincode::deserialize(&retrieved_data).unwrap();
+        assert_eq!(deserialized.status, SaltWitnessState::Idle);
+        assert_eq!(deserialized.block_number, 8);
+        assert_eq!(deserialized.blob_ids, vec![[0x00; 32], [0x01; 32]]);
+        assert_eq!(deserialized.witness_data, vec![1, 2, 3, 4]);
+
     }
 
     #[tokio::test]
@@ -1118,15 +1156,21 @@ pub(crate) mod test_salt_vec_oracle {
         let mut oracle = SaltVecOracle::new();
 
         // 插入多个 BlockWitness
-        let witness1 = TestBlockWitness {
-            metas: BTreeMap::new(),
-            kvs: BTreeMap::new(),
-            proof: TestSaltProof { proof: vec![0x01] },
+        let witness1 = WitnessStatus {
+            status: SaltWitnessState::Idle,
+            block_hash: Default::default(),
+            block_number: 8,
+            lock_time: 0,
+            blob_ids: vec![[0x00; 32], [0x01; 32]],
+            witness_data: vec![1, 2, 3, 4],
         };
-        let witness2 = TestBlockWitness {
-            metas: BTreeMap::new(),
-            kvs: BTreeMap::new(),
-            proof: TestSaltProof { proof: vec![0x02] },
+        let witness2 = WitnessStatus {
+            status: SaltWitnessState::Idle,
+            block_hash: Default::default(),
+            block_number: 9,
+            lock_time: 0,
+            blob_ids: vec![[0x00; 32], [0x01; 32]],
+            witness_data: vec![1, 2, 3, 4],
         };
 
         let serialized1 = bincode::serialize(&witness1).unwrap();
