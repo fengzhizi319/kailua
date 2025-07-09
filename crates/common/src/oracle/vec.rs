@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::oracle::keccak256;
 use crate::client::log;
 use crate::oracle::WitnessOracle;
 use crate::oracle::{needs_validation, validate_preimage};
@@ -1129,6 +1130,53 @@ impl SaltVecOracle {
             rollup_config,
         })
     }
+    pub fn compute_output_root(
+        &self,
+        state_root: B256,
+        withdrawal_storage_root: B256,
+        latest_block_hash: B256,
+    ) -> B256 {
+        // L2 输出根的计算公式：
+        // keccak256(version_byte || state_root || withdrawal_storage_root || latest_block_hash)
+        let mut encoded = [0u8; 128];
+        encoded[31] = 0;
+        encoded[32..64].copy_from_slice(state_root.as_slice());
+        encoded[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+        encoded[96..128].copy_from_slice(latest_block_hash.as_slice());
+
+        keccak256(&encoded)
+    }
+    /// 将计算的输出根插入 oracle 存储
+    ///
+    /// # Arguments
+    /// * `state_root` - 状态根
+    /// * `withdrawal_storage_root` - 提款存储根
+    /// * `latest_block_hash` - 最新区块哈希
+    ///
+    /// # Returns
+    /// * `B256` - 计算得到的输出根哈希
+    pub fn insert_output_root(
+        &mut self,
+        state_root: B256,
+        withdrawal_storage_root: B256,
+        latest_block_hash: B256,
+    ) -> B256 {
+          // 构造 encoded 数据 (version_byte || state_root || withdrawal_storage_root || latest_block_hash)
+        let mut encoded = [0u8; 128];
+        encoded[31] = 0; // version_byte
+        encoded[32..64].copy_from_slice(state_root.as_slice());
+        encoded[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+        encoded[96..128].copy_from_slice(latest_block_hash.as_slice());
+        // 计算输出根
+        let output_root=keccak256(&encoded);
+
+        // 使用 output_root 作为 key，encoded 数据作为 value
+        let output_root_key = PreimageKey::new(*output_root, PreimageKeyType::Keccak256);
+        self.insert_preimage(output_root_key, encoded.to_vec());
+
+        output_root
+    }
+
 }
 
 impl WitnessOracle for SaltVecOracle {
@@ -1191,8 +1239,270 @@ pub(crate) mod test_salt_vec_oracle {
     use alloy_primitives::{b256, keccak256};
     use kona_preimage::PreimageKeyType;
     use risc0_zkvm::sha::{Impl as SHA2, Sha256};
-
     pub fn prepare_salt_vec_oracle(beginblocknumber: usize, blockcount: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
+        let mut oracle = SaltVecOracle::default();
+        assert_eq!(oracle.preimage_count(), 0);
+        assert!(blockcount < 4, "blockcount 必须小于 4");
+
+        let block_hash_8 = b256!("0xb3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc");
+        let block_hash_9 = b256!("0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61");
+        let block_hash_10 = b256!("0xe2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c");
+        let block_hash_11 = b256!("0x1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7");
+
+        // 定义 state_root 和 withdrawal_storage_root
+        let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
+        let state_root_9 = b256!("0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00");
+        let state_root_10 = b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702");
+        let state_root_11 = b256!("0x040374769fe853f2ecd55b532250d5064d27754a980ed7443e7ba1a5f1f1f716");
+        let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+
+        let mut values = Vec::new();
+
+        // 处理区块 8
+        if beginblocknumber <= 8 && beginblocknumber + blockcount > 8 {
+            // 使用 insert_output_root 插入 output_root 相关数据
+            let _output_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+
+            // 获取刚插入的 encoded 数据
+            let mut encoded_8 = [0u8; 128];
+            encoded_8[31] = 0;
+            encoded_8[32..64].copy_from_slice(state_root_8.as_slice());
+            encoded_8[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_8[96..128].copy_from_slice(block_hash_8.as_slice());
+            values.push(encoded_8.to_vec());
+
+            // 插入 block_witness 相关数据
+            let witness_8 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_8,
+                block_number: 8,
+                lock_time: 0,
+                blob_ids: vec![[0x08; 32]],
+                witness_data: vec![0x8; 20],
+            };
+            let serialized_witness_8 = bincode::serialize(&witness_8).unwrap();
+            oracle.insert_block_witness(*block_hash_8, serialized_witness_8.clone());
+            values.push(serialized_witness_8);
+        }
+
+        // 处理区块 9
+        if beginblocknumber <= 9 && beginblocknumber + blockcount > 9 {
+            let _output_root_9 = oracle.insert_output_root(state_root_9, withdrawal_storage_root, block_hash_9);
+
+            let mut encoded_9 = [0u8; 128];
+            encoded_9[31] = 0;
+            encoded_9[32..64].copy_from_slice(state_root_9.as_slice());
+            encoded_9[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_9[96..128].copy_from_slice(block_hash_9.as_slice());
+            values.push(encoded_9.to_vec());
+
+            let witness_9 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_9,
+                block_number: 9,
+                lock_time: 0,
+                blob_ids: vec![[0x09; 32]],
+                witness_data: vec![0x9; 20],
+            };
+            let serialized_witness_9 = bincode::serialize(&witness_9).unwrap();
+            oracle.insert_block_witness(*block_hash_9, serialized_witness_9.clone());
+            values.push(serialized_witness_9);
+        }
+
+        // 处理区块 10
+        if beginblocknumber <= 10 && beginblocknumber + blockcount > 10 {
+            let _output_root_10 = oracle.insert_output_root(state_root_10, withdrawal_storage_root, block_hash_10);
+
+            let mut encoded_10 = [0u8; 128];
+            encoded_10[31] = 0;
+            encoded_10[32..64].copy_from_slice(state_root_10.as_slice());
+            encoded_10[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_10[96..128].copy_from_slice(block_hash_10.as_slice());
+            values.push(encoded_10.to_vec());
+
+            let witness_10 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_10,
+                block_number: 10,
+                lock_time: 0,
+                blob_ids: vec![[0x0A; 32]],
+                witness_data: vec![0xA; 20],
+            };
+            let serialized_witness_10 = bincode::serialize(&witness_10).unwrap();
+            oracle.insert_block_witness(*block_hash_10, serialized_witness_10.clone());
+            values.push(serialized_witness_10);
+        }
+
+        // 处理区块 11
+        if beginblocknumber <= 11 && beginblocknumber + blockcount > 11 {
+            let _output_root_11 = oracle.insert_output_root(state_root_11, withdrawal_storage_root, block_hash_11);
+
+            let mut encoded_11 = [0u8; 128];
+            encoded_11[31] = 0;
+            encoded_11[32..64].copy_from_slice(state_root_11.as_slice());
+            encoded_11[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_11[96..128].copy_from_slice(block_hash_11.as_slice());
+            values.push(encoded_11.to_vec());
+
+            let witness_11 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_11,
+                block_number: 11,
+                lock_time: 0,
+                blob_ids: vec![[0x0B; 32]],
+                witness_data: vec![0xB; 20],
+            };
+            let serialized_witness_11 = bincode::serialize(&witness_11).unwrap();
+            oracle.insert_block_witness(*block_hash_11, serialized_witness_11.clone());
+            values.push(serialized_witness_11);
+        }
+
+        // 验证预映像
+        oracle.validate_preimages().unwrap();
+
+        (oracle, values)
+    }
+    pub fn prepare_salt_vec_oracle2(beginblocknumber: usize, blockcount: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
+        let mut oracle = SaltVecOracle::default();
+        assert_eq!(oracle.preimage_count(), 0);
+        assert!(blockcount < 4, "blockcount 必须小于 4");
+
+        let block_hash_8 = b256!("0xb3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc");
+        let block_hash_9 = b256!("0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61");
+        let block_hash_10 = b256!("0xe2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c");
+        let block_hash_11 = b256!("0x1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7");
+
+        // 定义 state_root 和 withdrawal_storage_root
+        let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
+        let state_root_9 = b256!("0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00");
+        let state_root_10 = b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702");
+        let state_root_11 = b256!("0x040374769fe853f2ecd55b532250d5064d27754a980ed7443e7ba1a5f1f1f716");
+        let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+
+        let mut values = Vec::new();
+
+        // 处理区块 8
+        if beginblocknumber <= 8 && beginblocknumber + blockcount > 8 {
+            // 插入 output_root 相关数据
+            let computed_root_8 = oracle.compute_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+
+            let mut encoded_8 = [0u8; 128];
+            encoded_8[31] = 0; // version_byte
+            encoded_8[32..64].copy_from_slice(state_root_8.as_slice());
+            encoded_8[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_8[96..128].copy_from_slice(block_hash_8.as_slice());
+
+            let output_root_key_8 = PreimageKey::new(*computed_root_8, PreimageKeyType::Keccak256);
+            oracle.insert_preimage(output_root_key_8, encoded_8.to_vec());
+            values.push(encoded_8.to_vec());
+
+            // 插入 block_witness 相关数据
+            let witness_8 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_8,
+                block_number: 8,
+                lock_time: 0,
+                blob_ids: vec![[0x08; 32]],
+                witness_data: vec![0x8; 20],
+            };
+            let serialized_witness_8 = bincode::serialize(&witness_8).unwrap();
+            oracle.insert_block_witness(*block_hash_8, serialized_witness_8.clone());
+            values.push(serialized_witness_8);
+        }
+
+        // 处理区块 9
+        if beginblocknumber <= 9 && beginblocknumber + blockcount > 9 {
+            // 插入 output_root 相关数据
+            let computed_root_9 = oracle.compute_output_root(state_root_9, withdrawal_storage_root, block_hash_9);
+
+            let mut encoded_9 = [0u8; 128];
+            encoded_9[31] = 0;
+            encoded_9[32..64].copy_from_slice(state_root_9.as_slice());
+            encoded_9[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_9[96..128].copy_from_slice(block_hash_9.as_slice());
+
+            let output_root_key_9 = PreimageKey::new(*computed_root_9, PreimageKeyType::Keccak256);
+            oracle.insert_preimage(output_root_key_9, encoded_9.to_vec());
+            values.push(encoded_9.to_vec());
+
+            // 插入 block_witness 相关数据
+            let witness_9 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_9,
+                block_number: 9,
+                lock_time: 0,
+                blob_ids: vec![[0x09; 32]],
+                witness_data: vec![0x9; 20],
+            };
+            let serialized_witness_9 = bincode::serialize(&witness_9).unwrap();
+            oracle.insert_block_witness(*block_hash_9, serialized_witness_9.clone());
+            values.push(serialized_witness_9);
+        }
+
+        // 处理区块 10
+        if beginblocknumber <= 10 && beginblocknumber + blockcount > 10 {
+            // 插入 output_root 相关数据
+            let computed_root_10 = oracle.compute_output_root(state_root_10, withdrawal_storage_root, block_hash_10);
+
+            let mut encoded_10 = [0u8; 128];
+            encoded_10[31] = 0;
+            encoded_10[32..64].copy_from_slice(state_root_10.as_slice());
+            encoded_10[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_10[96..128].copy_from_slice(block_hash_10.as_slice());
+
+            let output_root_key_10 = PreimageKey::new(*computed_root_10, PreimageKeyType::Keccak256);
+            oracle.insert_preimage(output_root_key_10, encoded_10.to_vec());
+            values.push(encoded_10.to_vec());
+
+            // 插入 block_witness 相关数据
+            let witness_10 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_10,
+                block_number: 10,
+                lock_time: 0,
+                blob_ids: vec![[0x0A; 32]],
+                witness_data: vec![0xA; 20],
+            };
+            let serialized_witness_10 = bincode::serialize(&witness_10).unwrap();
+            oracle.insert_block_witness(*block_hash_10, serialized_witness_10.clone());
+            values.push(serialized_witness_10);
+        }
+
+        // 处理区块 11
+        if beginblocknumber <= 11 && beginblocknumber + blockcount > 11 {
+            // 插入 output_root 相关数据
+            let computed_root_11 = oracle.compute_output_root(state_root_11, withdrawal_storage_root, block_hash_11);
+
+            let mut encoded_11 = [0u8; 128];
+            encoded_11[31] = 0;
+            encoded_11[32..64].copy_from_slice(state_root_11.as_slice());
+            encoded_11[64..96].copy_from_slice(withdrawal_storage_root.as_slice());
+            encoded_11[96..128].copy_from_slice(block_hash_11.as_slice());
+
+            let output_root_key_11 = PreimageKey::new(*computed_root_11, PreimageKeyType::Keccak256);
+            oracle.insert_preimage(output_root_key_11, encoded_11.to_vec());
+            values.push(encoded_11.to_vec());
+
+            // 插入 block_witness 相关数据
+            let witness_11 = WitnessStatus {
+                status: SaltWitnessState::Witnessed,
+                block_hash: block_hash_11,
+                block_number: 11,
+                lock_time: 0,
+                blob_ids: vec![[0x0B; 32]],
+                witness_data: vec![0xB; 20],
+            };
+            let serialized_witness_11 = bincode::serialize(&witness_11).unwrap();
+            oracle.insert_block_witness(*block_hash_11, serialized_witness_11.clone());
+            values.push(serialized_witness_11);
+        }
+
+        // 验证预映像
+        oracle.validate_preimages().unwrap();
+
+        (oracle, values)
+    }
+    pub fn prepare_salt_vec_oracle1(beginblocknumber: usize, blockcount: usize) -> (SaltVecOracle, Vec<Vec<u8>>) {
         let mut oracle = SaltVecOracle::default();
         assert_eq!(oracle.preimage_count(), 0);
         assert!(blockcount < 4, "blockcount 必须小于 3");
@@ -1884,5 +2194,82 @@ pub(crate) mod test_salt_vec_oracle {
         assert_eq!(retrieved_data.blob_fetch_requests().len(), 0);
     }
 
+    #[tokio::test]
+    async fn test_compute_output_root() {
+        let oracle = SaltVecOracle::default();
+
+        let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+        let block_hash_8 = b256!("b3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc");//
+        let block_hash_9 = b256!("f6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61");//
+        let block_hash_10 = b256!("e2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c");//
+        let block_hash_11 = b256!("1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7");//
+        let block_hash_12 = b256!("0x0b48c8432fbe81b02317b6a85ef176679c57b0177b8766f03091703040a0526d");//
+
+        let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
+        let state_root_9 = b256!("0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00");
+        let state_root_10 = b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702");
+        let state_root_11 = b256!("0x040374769fe853f2ecd55b532250d5064d27754a980ed7443e7ba1a5f1f1f716");
+        let state_root_12 = b256!("0x6de97ad7bec8d27d75bdd7cda9bd23ce4e3dd81ec5ee8e409f60dde8afb80703");
+
+
+        let computed_root_8 = oracle.compute_output_root(
+            state_root_8,
+            withdrawal_storage_root,
+            block_hash_8,
+        );
+        let computed_root_9 = oracle.compute_output_root(
+            state_root_9,
+            withdrawal_storage_root,
+            block_hash_9,
+        );
+        let computed_root_10 = oracle.compute_output_root(
+            state_root_10,
+            withdrawal_storage_root,
+            block_hash_10,
+        );
+        let computed_root_11 = oracle.compute_output_root(
+            state_root_11,
+            withdrawal_storage_root,
+            block_hash_11,
+        );
+        let expected_root_8 = b256!(
+            "0x2a540cccd7e7a22715978c5d469362546b8293f128ac9dd876318493b31f53c6"
+        );
+        let expected_root_9 = b256!(
+            "0xe9b072c417fd16c3f51dd72d000a8829671531aa31af66a147fe8a81fc5228f1"
+        );
+        let expected_root_10 = b256!(
+            "0x6274117310ab5884ec0e76252500991634c331da7a9acdbe7d0e56210fd72302"
+        );
+        let expected_root_11 = b256!(
+            "0xe60ea7c0e0364788784d4d10e0485e64235509574a2772a40bbaaadb95521d5f"
+        );
+        assert_eq!(computed_root_8, expected_root_8);
+        assert_eq!(computed_root_9, expected_root_9);
+        assert_eq!(computed_root_10, expected_root_10);
+        assert_eq!(computed_root_11, expected_root_11);
+
+    }
+    #[tokio::test]
+    async fn test_prepare_salt_vec_oracle_with_output_roots() {
+        let (oracle, values) = prepare_salt_vec_oracle(8, 2);
+
+        // 验证可以通过 output_root 检索到对应的 encoded 数据
+        let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
+        let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+        let block_hash_8 = b256!("0xb3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc");
+
+        let computed_root_8 = oracle.compute_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+        let output_root_key_8 = PreimageKey::new(*computed_root_8, PreimageKeyType::Keccak256);
+
+        let retrieved_value = oracle.get(output_root_key_8).await.unwrap();
+        assert_eq!(retrieved_value.len(), 128);
+
+        // 验证 encoded 数据的正确性
+        assert_eq!(retrieved_value[31], 0); // version_byte
+        assert_eq!(&retrieved_value[32..64], state_root_8.as_slice());
+        assert_eq!(&retrieved_value[64..96], withdrawal_storage_root.as_slice());
+        assert_eq!(&retrieved_value[96..128], block_hash_8.as_slice());
+    }
 }
 
