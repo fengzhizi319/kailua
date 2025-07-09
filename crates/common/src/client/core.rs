@@ -111,9 +111,12 @@ where
         println!("safe_head_hash: {:?}", safe_head_hash);
 
         // 初始化L1/L2链数据提供者
+        println!("begin l1_provider initialized");
         let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, stream).await?;
+        println!("end l1_provider initialized");
         let mut l2_provider =
             OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
+        println!("l2_provider");
 
         // The claimed L2 block number must be greater than or equal to the L2 safe head.
         // Fetch the safe head's block header.
@@ -131,6 +134,9 @@ where
         let safe_head_number = safe_head.number;
         //求出一共有多少个block需要执行
         let expected_output_count = (boot.claimed_l2_block_number - safe_head_number) as usize;
+        println!("SAFE HEAD number: {}", safe_head_number);
+        println!("CLAIMED L2 BLOCK NUMBER: {}", boot.claimed_l2_block_number);
+        println!("EXPECTED OUTPUT COUNT: {}", expected_output_count);
 
         ////////////////////////////// 纯执行模式处理，无需关注L1,EXECUTION CACHING     ////////////////////////////////////
         //                     EXECUTION CACHING                      //
