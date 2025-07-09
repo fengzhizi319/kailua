@@ -1161,7 +1161,7 @@ impl SaltVecOracle {
         withdrawal_storage_root: B256,
         latest_block_hash: B256,
     ) -> B256 {
-          // 构造 encoded 数据 (version_byte || state_root || withdrawal_storage_root || latest_block_hash)
+        // 构造 encoded 数据 (version_byte || state_root || withdrawal_storage_root || latest_block_hash)
         let mut encoded = [0u8; 128];
         encoded[31] = 0; // version_byte
         encoded[32..64].copy_from_slice(state_root.as_slice());
@@ -1257,11 +1257,14 @@ pub(crate) mod test_salt_vec_oracle {
         let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
 
         let mut values = Vec::new();
+        let mut _output_root_8=B256::default();
 
         // 处理区块 8
         if beginblocknumber <= 8 && beginblocknumber + blockcount > 8 {
             // 使用 insert_output_root 插入 output_root 相关数据
-            let _output_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+            _output_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+
+            println!("insert output_root_key_8: {:?}", B256::from(_output_root_8));
 
             // 获取刚插入的 encoded 数据
             let mut encoded_8 = [0u8; 128];
@@ -1288,6 +1291,7 @@ pub(crate) mod test_salt_vec_oracle {
         // 处理区块 9
         if beginblocknumber <= 9 && beginblocknumber + blockcount > 9 {
             let _output_root_9 = oracle.insert_output_root(state_root_9, withdrawal_storage_root, block_hash_9);
+            println!("insert output_root_key_9: {:?}", B256::from(_output_root_9));
 
             let mut encoded_9 = [0u8; 128];
             encoded_9[31] = 0;
@@ -1356,7 +1360,14 @@ pub(crate) mod test_salt_vec_oracle {
             oracle.insert_block_witness(*block_hash_11, serialized_witness_11.clone());
             values.push(serialized_witness_11);
         }
-
+        // let mut output_preimage = [0u8; 128];
+        // println!("get_exact output_root_key_8: {:?}", B256::from(_output_root_8));
+        // oracle.get_exact(
+        //     PreimageKey::new_keccak256(*_output_root_8), // 构造Keccak256类型的预映像键
+        //     output_preimage.as_mut(), // 写入预分配的128字节缓冲区
+        // );
+        // // 输出预映像
+        // println!("output_preimage: {:?}", output_preimage);
         // 验证预映像
         oracle.validate_preimages().unwrap();
 
@@ -1543,7 +1554,7 @@ pub(crate) mod test_salt_vec_oracle {
         } else {
             panic!("blockcount must be less than 3");
         }
-   
+
         // 构造 10 个不同的 value，每个为 Vec<u8>
         let values = (0..10)
             .map(|i| format!("{i} test {i} value {i}").as_bytes().to_vec())
@@ -1552,22 +1563,22 @@ pub(crate) mod test_salt_vec_oracle {
         // 为每个 value 插入 sha3（keccak256）类型的 key
         for value in &values {
             let sha3_key = PreimageKey::new_keccak256(keccak256(value).0);
-            oracle.insert_preimage(sha3_key, value.clone());           
+            oracle.insert_preimage(sha3_key, value.clone());
         }
         // 校验预映像
         oracle.validate_preimages().unwrap();
-        
+
         for value in &values {
             let sha2_key = PreimageKey::new(
                 SHA2::hash_bytes(value).as_bytes().try_into().unwrap(),
                 PreimageKeyType::Sha256,
-            );            
+            );
             oracle.insert_preimage(sha2_key, value.clone());
-            
+
         }
         // 再次校验
         oracle.validate_preimages().unwrap();
-        
+
         (oracle, values)
     }
 
@@ -2195,6 +2206,41 @@ pub(crate) mod test_salt_vec_oracle {
     }
 
     #[tokio::test]
+    async fn test_insert_output_root()
+    {
+        let mut oracle = SaltVecOracle::default();
+        let block_hash_8 = b256!("0xb3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc");
+        let block_hash_9 = b256!("0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61");
+        let block_hash_10 = b256!("0xe2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c");
+        let block_hash_11 = b256!("0x1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7");
+
+        // 定义 state_root 和 withdrawal_storage_root
+        let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
+        let state_root_9 = b256!("0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00");
+        let state_root_10 = b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702");
+        let state_root_11 = b256!("0x040374769fe853f2ecd55b532250d5064d27754a980ed7443e7ba1a5f1f1f716");
+        let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+
+        let expected_root_8 = b256!("0x2a540cccd7e7a22715978c5d469362546b8293f128ac9dd876318493b31f53c6");
+        let expected_root_9 = b256!("0xe9b072c417fd16c3f51dd72d000a8829671531aa31af66a147fe8a81fc5228f1");
+        let expected_root_10 = b256!("0x6274117310ab5884ec0e76252500991634c331da7a9acdbe7d0e56210fd72302");
+        let expected_root_11 = b256!("0xe60ea7c0e0364788784d4d10e0485e64235509574a2772a40bbaaadb95521d5f");
+
+        let mut computed_root_8=B256::default();
+
+        computed_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+
+        println!("insert output_root_key_8: {:?}", B256::from(computed_root_8));
+        let mut output_preimage = [0u8; 128];
+        oracle.get_exact(
+            PreimageKey::new_keccak256(*computed_root_8), // 构造Keccak256类型的预映像键
+            output_preimage.as_mut(), // 写入预分配的128字节缓冲区
+        ).await.expect("TODO: panic message");
+        println!("insert output_preimage: {:?}", output_preimage);
+
+    }
+
+    #[tokio::test]
     async fn test_compute_output_root() {
         let oracle = SaltVecOracle::default();
 
@@ -2258,11 +2304,22 @@ pub(crate) mod test_salt_vec_oracle {
         let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
         let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
         let block_hash_8 = b256!("0xb3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc");
+        let expected_root_8 = b256!(
+            "0x2a540cccd7e7a22715978c5d469362546b8293f128ac9dd876318493b31f53c6"
+        );
 
         let computed_root_8 = oracle.compute_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
         let output_root_key_8 = PreimageKey::new(*computed_root_8, PreimageKeyType::Keccak256);
+        println!("computed_root_8: {:?}", computed_root_8);
+        println!("output_root_key_8: {:?}", B256::from(output_root_key_8));
 
         let retrieved_value = oracle.get(output_root_key_8).await.unwrap();
+        let mut output_preimage = [0u8; 128];
+        oracle.get_exact(
+            PreimageKey::new_keccak256(*computed_root_8), // 构造Keccak256类型的预映像键
+            output_preimage.as_mut(), // 写入预分配的128字节缓冲区
+        ).await.expect("TODO: panic message");
+        println!("output_preimage: {:?}", output_preimage);
         assert_eq!(retrieved_value.len(), 128);
 
         // 验证 encoded 数据的正确性

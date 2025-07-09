@@ -108,6 +108,7 @@ where
         // 获取L2安全头的区块哈希（基于达成共识的输出根，即前一个块的header）
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
+        println!("safe_head_hash: {:?}", safe_head_hash);
 
         // 初始化L1/L2链数据提供者
         let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, stream).await?;
@@ -367,7 +368,7 @@ where
             output_preimage.as_mut(), // 写入预分配的128字节缓冲区
         )
         .await?;
-
+    println!("[fetch_safe_head_hash]  output_preimage: {:?}", output_preimage);
     output_preimage[96..128]
         .try_into()
         .map_err(OracleProviderError::SliceConversion)
