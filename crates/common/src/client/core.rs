@@ -126,7 +126,7 @@ where
         let safe_head = l2_provider
             .header_by_hash(safe_head_hash)
             .map(|header| Sealed::new_unchecked(header, safe_head_hash))?;
-
+        println!("SAFE HEAD");
         // 验证声明的L2区块号不小于安全头区块号
         if boot.claimed_l2_block_number < safe_head.number {
             bail!("Invalid claim"); // 关键断言失败直接终止
@@ -210,6 +210,8 @@ where
         //                   DERIVATION & EXECUTION                   //
         ////////////////////////////////////////////////////////////////
         client::log("PRECONDITION");
+        println!("PRECONDITION");
+        println!("precondition_validation_data_hash: {:?}", precondition_validation_data_hash);
         let precondition_data = precondition::load_precondition_data(
             precondition_validation_data_hash,
             oracle.clone(),
@@ -217,8 +219,10 @@ where
         )
         .await
         .context("load_precondition_data")?;
+        println!("precondition_data: {:?}", precondition_data);
 
         client::log("DERIVATION & EXECUTION");
+        println!("DERIVATION & EXECUTION");
         // Create a new derivation driver with the given boot information and oracle.
         // 创建管道游标（连接L1/L2数据）
         let cursor = new_oracle_pipeline_cursor(
@@ -229,7 +233,10 @@ where
         )
         .await
         .context("new_oracle_pipeline_cursor")?;
+
+        println!("new_oracle_pipeline_cursor");
         l2_provider.set_cursor(cursor.clone());
+        println!("set_cursor");
 
         let da_provider =
             EthereumDataSource::new_from_parts(l1_provider.clone(), beacon, &rollup_config);
@@ -405,11 +412,13 @@ pub mod tests {
     use super::*;
     use crate::client::tests::TestOracle;
     use crate::precondition::PreconditionValidationData;
-    use alloy_primitives::{b256, keccak256, Address, B256};
+    use alloy_primitives::{b256, keccak256, Address, B256, U256};
     use kona_proof::l1::OracleBlobProvider;
     use kona_proof::BootInfo;
     use std::sync::{Arc, Mutex};
+    use alloy_consensus::Header;
     use alloy_eips::eip4844::IndexedBlobHash;
+    use alloy_trie::EMPTY_ROOT_HASH;
     use crate::blobs::{BlobFetchRequest, BlobWitnessData};
     use crate::blobs::tests::gen_blobs;
     use crate::boot::tests::gen_boot_infos;
@@ -462,8 +471,8 @@ pub mod tests {
 
         Ok(execution_cache)
     }
-    pub fn create_test_witness_salt_vec_oracle() -> (Witness<SaltVecOracle>, Vec<Vec<u8>>) {
-        let (vec_oracle, values) = prepare_salt_vec_oracle(8, 2);
+    pub fn create_test_witness_salt_vec_oracle() -> Witness<SaltVecOracle> {
+        let vec_oracle = prepare_salt_vec_oracle(8, 3);
         let blobs_witness = BlobWitnessData::from(gen_blobs(10));
         let witness = Witness {
             oracle_witness: vec_oracle.deep_clone(),
@@ -479,7 +488,7 @@ pub mod tests {
             fpvm_image_id: keccak256(b"fpvm_image_id"),
         };
 
-        (witness, values)
+        witness
     }
     #[tokio::test(flavor = "multi_thread")]
     async fn test_block_witness_derivation_ut() {
@@ -490,12 +499,110 @@ pub mod tests {
         use kona_proof::BootInfo;
         use std::sync::{Arc};
         use kona_proof::l1::OracleBlobProvider;
+        let test_l1_header = Header {
+            parent_hash: b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"),
+            ommers_hash: b256!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+            beneficiary: alloy_primitives::Address::from([0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd]),
+            state_root: b256!("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+            transactions_root: b256!("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+            receipts_root: b256!("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+            logs_bloom: Default::default(),
+            difficulty: U256::from(100),
+            number: 100,
+            gas_limit: 8000000,
+            gas_used: 7500000,
+            timestamp: 1640995200,
+            extra_data: Default::default(),
+            mix_hash: Default::default(),
+            nonce: [0u8; 8].into(),
+            base_fee_per_gas: Some(20000000000),
+            withdrawals_root: Some(EMPTY_ROOT_HASH),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(EMPTY_ROOT_HASH),
+            requests_hash: None,
+        };
+        //block8
+        //head:0xfa5a973957d70f5433ffc6564fa9361b3f0cd98fc0dd9fca79b97c5c6f3314be
+        let test_l2_header_8 = Header {
+            parent_hash: b256!("0x3fb0d3a985f698716368dbb28f4dd6cc53febc52e1d3ba1847b2e7856fd469b9"),
+            ommers_hash: b256!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+            beneficiary: alloy_primitives::Address::from([0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd]),
+            state_root: b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100"),
+            transactions_root: b256!("0xf313295412948c407b8b27ca3204da25b50b5a90c7aa12197c178724a16bf7ee"),
+            receipts_root: b256!("0xea682fd3f857b80044dc69a2c544370c00d82c4e3c58c346c6c5c64882efbb7d"),
+            logs_bloom: Default::default(),
+            difficulty: U256::from(0),
+            number: 8,
+            gas_limit: 0x77359400,
+            gas_used: 0x3dcf83,
+            timestamp: 0x68479315,
+            extra_data: Default::default(),
+            mix_hash: Default::default(),
+            nonce: [0u8; 8].into(),
+            base_fee_per_gas: Some(0x24f2de),
+            withdrawals_root: Option::from(b256!("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Option::from(b256!("0xb5e2b79ea7a86582fbb81ded3143de243e4bf489004cd4de77ffdd8469a12f22")),
+            requests_hash: None,
+        };
+        //block9
+        //root 0x962ce2cad3cb7a3071e5f110548e093866ea4d6328272898aba72528769d1513
+        let test_l2_header_9 = Header {
+            parent_hash: b256!("0xb3bda63a35f00b666dc7dcb3542ebd4d2755ecbbb97d5b5b312b57b5124658fc"),
+            ommers_hash: b256!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+            beneficiary: alloy_primitives::Address::from([0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd]),
+            state_root: b256!("0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00"),
+            transactions_root: b256!("0x4b5afecbbfd21b10e5c41f603092aee09ab69b51548dc3be0bec6ca51ca27245"),
+            receipts_root: b256!("0x4c113ca85c788b7e5ce4656411827e8b6b9acbb91ba8c296adee1aee5cc28557"),
+            logs_bloom: Default::default(),
+            difficulty: U256::from(0),
+            number: 9,
+            gas_limit: 0x77359400,
+            gas_used: 0xab1e,
+            timestamp: 0x68479316,
+            extra_data: Default::default(),
+            mix_hash: Default::default(),
+            nonce: [0u8; 8].into(),
+            base_fee_per_gas: Some(0x24cd30),
+            withdrawals_root: Option::from(b256!("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Option::from(b256!("0xb5e2b79ea7a86582fbb81ded3143de243e4bf489004cd4de77ffdd8469a12f22")),
+            requests_hash: None,
+        };
+        let test_l2_header_10 = Header {
+            parent_hash: b256!("0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61"),
+            ommers_hash: b256!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+            beneficiary: alloy_primitives::Address::from([0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd]),
+            state_root: b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702"),
+            transactions_root: b256!("0x66b8f3f78b6d33b2f22dfa6c76931d60fb954a7c15c8d5a43fb3bdc4588faf89"),
+            receipts_root: b256!("0x0dcd69ba588fae1b9bef02dc27d0e3872ebe03787aa280cf4344ccd300c407f1"),
+            logs_bloom: Default::default(),
+            difficulty: U256::from(0),
+            number: 10,
+            gas_limit: 0x77359400,
+            gas_used: 0x4523a,
+            timestamp: 0x68479317,
+            extra_data: Default::default(),
+            mix_hash: Default::default(),
+            nonce: [0u8; 8].into(),
+            base_fee_per_gas: Some(0x24a782),
+            withdrawals_root: Option::from(b256!("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Option::from(b256!("0xf26dc90bf0823aaf8b23e7d85a37ce0873f0ca6315c4dfdf44d5a75390b81c61")),
+            requests_hash: None,
+        };
+        //l1_head: 0x73bf9ba5b181c8828220f33d1b06347a60a80e47a2d05da880b2e3f4d9d3368a
+
 
         // 构造 boot_info
         let boot_info = BootInfo {
-            l1_head: b256!("0x417ffee9dd1ccbd35755770dd8c73dbdcd96ba843c532788850465bdd08ea495"),
-            agreed_l2_output_root: b256!("0x2a540cccd7e7a22715978c5d469362546b8293f128ac9dd876318493b31f53c6"),
-            claimed_l2_output_root: b256!("0xe9b072c417fd16c3f51dd72d000a8829671531aa31af66a147fe8a81fc5228f1"),
+            l1_head: b256!("0x73bf9ba5b181c8828220f33d1b06347a60a80e47a2d05da880b2e3f4d9d3368a"),
+            agreed_l2_output_root: b256!("0xa7d0bd55513f156e75d1ca79016491f706650e0c479319552e8e1d730c3c6f1a"),
+            claimed_l2_output_root: b256!("0x3c803d2882fb3633a530ed64c5b040acb4809f6576fcee97caa9b03ef850bc1b"),
             claimed_l2_block_number: 9,
             chain_id: 1,
             rollup_config: Default::default(),
@@ -517,16 +624,27 @@ pub mod tests {
 
 
         // 构造 SaltVecOracle
-        let (mut salt_vec_oracle, _values) = prepare_salt_vec_oracle(8, 2);
+        let mut salt_vec_oracle= prepare_salt_vec_oracle(8, 3);
         // boot_info.write(&salt_vec_oracle).unwrap(); // TODO: Fix this call
+        let l1_head =salt_vec_oracle.insert_header(test_l1_header.clone()).await;
+        assert_eq!(l1_head,boot_info.l1_head);
+        let l2_agreed_head_8 =salt_vec_oracle.insert_header(test_l2_header_8.clone()).await;
+        println!("l2_agreed_head_8:{:?}", B256::from(l2_agreed_head_8));
+        let l2_agreed_head_9 =salt_vec_oracle.insert_header(test_l2_header_9.clone()).await;
+        println!("l2_agreed_head_9:{:?}", B256::from(l2_agreed_head_9));
+
+        let l2_agreed_head_10 =salt_vec_oracle.insert_header(test_l2_header_10.clone()).await;
+        println!("l2_agreed_head_10:{:?}", B256::from(l2_agreed_head_10));
+
         salt_vec_oracle.insert_boot_info(boot_info.clone()).await.unwrap();
         let precondition_validation_data_hash = salt_vec_oracle.insert_precondition_validation_data(precondition_data.clone());
+        let precondition_validation_data_hash_zero=B256::default();
         let oracle = Arc::new(salt_vec_oracle);
 
         // 调用 run_core_client
         let collection_target = Arc::new(Mutex::new(Vec::new()));
         let _result = run_core_client(
-            precondition_validation_data_hash,
+            precondition_validation_data_hash_zero,
             oracle.clone(),
             oracle.clone(),
             OracleBlobProvider::new(oracle.clone()),
@@ -552,7 +670,7 @@ pub mod tests {
         boot_info: BootInfo,
         precondition_validation_data: Option<PreconditionValidationData>,
     ) -> anyhow::Result<Vec<Arc<Execution>>> {
-        let (salt_vec_oracle, _values) = prepare_salt_vec_oracle(8, 2);
+        let salt_vec_oracle = prepare_salt_vec_oracle(8, 2);
 
         let oracle = Arc::new(salt_vec_oracle);
 

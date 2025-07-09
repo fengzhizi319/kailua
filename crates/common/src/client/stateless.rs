@@ -160,7 +160,7 @@ pub mod tests {
             .collect::<Vec<_>>();
         boot_info.l1_head = B256::ZERO;
 
-        let (oracle_witness, _) = prepare_salt_vec_oracle(512, 1);
+        let oracle_witness = prepare_salt_vec_oracle(512, 1);
         let stream_witness = oracle_witness.clone();
         let blobs_witness = BlobWitnessData::from(gen_blobs(10));
         
