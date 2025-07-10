@@ -638,6 +638,7 @@ pub mod tests {
 
         salt_vec_oracle.insert_boot_info(boot_info.clone()).await.unwrap();
         let precondition_validation_data_hash = salt_vec_oracle.insert_precondition_validation_data(precondition_data.clone());
+        println!("precondition_validation_data_hash: {:?}", precondition_validation_data_hash);
         let precondition_validation_data_hash_zero=B256::default();
         let oracle = Arc::new(salt_vec_oracle);
 

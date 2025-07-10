@@ -1977,21 +1977,31 @@ pub(crate) mod test_salt_vec_oracle {
         let state_root_10 = b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702");
         let withdrawal_storage_root = b256!("0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
 
-        let expected_root_8 = b256!("0x2a540cccd7e7a22715978c5d469362546b8293f128ac9dd876318493b31f53c6");
-        let expected_root_9 = b256!("0xe9b072c417fd16c3f51dd72d000a8829671531aa31af66a147fe8a81fc5228f1");
-        let expected_root_10 = b256!("0x6274117310ab5884ec0e76252500991634c331da7a9acdbe7d0e56210fd72302");
+        let expected_root_8 = b256!("0xe70fe3e0a79fa1de96425e10255d071cf7b3960a2eccef1b0c78a83fdb700e5e");
+        let expected_root_9 = b256!("0xaec20092208f340960cca761a34d6527fea30b0c7613ed9dd0d6b0cd419c693d");
+        let expected_root_10 = b256!("0x2b32c441a10764f60bb2dda473f29d8686af71c4c072bc7b78b461bc0f63c656");
 
-        let mut computed_root_8=B256::default();
 
-        computed_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+        let computed_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+        let computed_root_9 = oracle.insert_output_root(state_root_9, withdrawal_storage_root, block_hash_9);
+        let computed_root_10 = oracle.insert_output_root(state_root_10, withdrawal_storage_root, block_hash_10);
 
         println!("insert output_root_key_8: {:?}", B256::from(computed_root_8));
+        println!("insert output_root_key_9: {:?}", B256::from(computed_root_9));
+        println!("insert output_root_key_10: {:?}", B256::from(computed_root_10));
+        assert_eq!(expected_root_8, computed_root_8);
+        assert_eq!(expected_root_9, computed_root_9);
+        assert_eq!(expected_root_10, computed_root_10);
         let mut output_preimage = [0u8; 128];
         oracle.get_exact(
             PreimageKey::new_keccak256(*computed_root_8), // 构造Keccak256类型的预映像键
             output_preimage.as_mut(), // 写入预分配的128字节缓冲区
         ).await.expect("TODO: panic message");
-        println!("insert output_preimage: {:?}", output_preimage);
+        //println!("insert output_preimage: {:?}", output_preimage);
+        println!(
+            "insert output_preimage: {}",
+            output_preimage.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        );
 
     }
 
@@ -2004,13 +2014,13 @@ pub(crate) mod test_salt_vec_oracle {
         let block_hash_9 = b256!("f6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61");//
         let block_hash_10 = b256!("e2f5c2448f2b30e3e875ed95f9c161bd8c3d6f9cb027ee32bc3d9045462c446c");//
         let block_hash_11 = b256!("1d739b3e2bad7fd62709aefdd418749abf35de4fbb547396c89ccf6c2ad427a7");//
-        let block_hash_12 = b256!("0x0b48c8432fbe81b02317b6a85ef176679c57b0177b8766f03091703040a0526d");//
+        // let block_hash_12 = b256!("0x0b48c8432fbe81b02317b6a85ef176679c57b0177b8766f03091703040a0526d");//
 
         let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
         let state_root_9 = b256!("0xfc3c9527cab0b157942567b795faa1b3fc734c394159a9822509ddcafcb03b00");
         let state_root_10 = b256!("0x36357858790f80080cd75266b7a427dcf77b073626a5eda9c6b933d736008702");
         let state_root_11 = b256!("0x040374769fe853f2ecd55b532250d5064d27754a980ed7443e7ba1a5f1f1f716");
-        let state_root_12 = b256!("0x6de97ad7bec8d27d75bdd7cda9bd23ce4e3dd81ec5ee8e409f60dde8afb80703");
+        // let state_root_12 = b256!("0x6de97ad7bec8d27d75bdd7cda9bd23ce4e3dd81ec5ee8e409f60dde8afb80703");
 
 
         let computed_root_8 = oracle.compute_output_root(
@@ -2063,8 +2073,10 @@ pub(crate) mod test_salt_vec_oracle {
             "0x2a540cccd7e7a22715978c5d469362546b8293f128ac9dd876318493b31f53c6"
         );
 
+
         let computed_root_8 = oracle.compute_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
         let output_root_key_8 = PreimageKey::new(*computed_root_8, PreimageKeyType::Keccak256);
+        assert_eq!(computed_root_8,expected_root_8);
         println!("computed_root_8: {:?}", computed_root_8);
         println!("output_root_key_8: {:?}", B256::from(output_root_key_8));
 
