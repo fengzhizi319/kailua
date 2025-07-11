@@ -92,6 +92,7 @@ pub fn run_core_client<
 where
     <B as BlobProvider>::Error: Debug,
 {
+    kona_cli::init_test_tracing();
     let (boot, precondition_hash, output_hash) = kona_proof::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
@@ -101,6 +102,7 @@ where
             .await
             .context("BootInfo::load")?;
         println!("BootInfo.l1_head: {:#?}", boot.l1_head);
+        client::log(&format!("BootInfo.l1_head: {:#?}", boot.l1_head));
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         client::log("SAFE HEAD HASH");

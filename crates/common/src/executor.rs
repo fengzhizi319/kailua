@@ -242,10 +242,11 @@ pub async fn new_execution_cursor<O>(
 where
     O: CommsClient + FlushableCache + FlushableCache + Send + Sync + Debug,
 {
+    println!("[new_execution_cursor]");
     let safe_head_info = l2_chain_provider
         .l2_block_info_by_number(safe_header.number)
         .await?;
-
+    println!("{:#?}", safe_head_info);
     // Walk back the starting L1 block by `channel_timeout` to ensure that the full channel is
     // captured.
     let channel_timeout = rollup_config.channel_timeout(safe_head_info.block_info.timestamp);

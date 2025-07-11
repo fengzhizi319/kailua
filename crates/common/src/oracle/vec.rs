@@ -19,7 +19,7 @@ use crate::oracle::{needs_validation, validate_preimage};
 use crate::precondition::PreconditionValidationData;
 use crate::rkyv::vec::PreimageVecStoreRkyv;
 use alloy_primitives::map::HashMap;
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use async_trait::async_trait;
 use kona_preimage::errors::PreimageOracleResult;
 use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
@@ -27,6 +27,7 @@ use kona_proof::{BootInfo, FlushableCache};
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use alloy_consensus::Header;
 use alloy_primitives::B256;
@@ -35,6 +36,7 @@ use alloy_trie::EMPTY_ROOT_HASH;
 use kona_proof::boot::{L1_HEAD_KEY, L2_OUTPUT_ROOT_KEY, L2_CLAIM_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CHAIN_ID_KEY, L2_ROLLUP_CONFIG_KEY};
 use kona_proof::errors::OracleProviderError;
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use tracing::info;
 
 /// A type alias representing an indexed preimage.
@@ -545,6 +547,16 @@ pub fn read_shard() -> PreimageVecEntry {
         .expect("Failed to deserialize shard")
 }
 
+
+pub fn load_json_file<T: DeserializeOwned>(data_dir: &PathBuf, file_name: &str) -> JsonResult<T> {
+    use serde::de::DeserializeOwned;
+    use std::path::PathBuf;
+    use std::fs;
+    use serde_json::Result as JsonResult;
+    let path = data_dir.join(file_name);
+    let content = fs::read_to_string(path)?;
+    serde_json::from_str(&content)
+}
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod test_vec_oracle {
@@ -1218,6 +1230,15 @@ impl SaltVecOracle {
 
         output_root
     }
+    pub fn load_file_insert_transaction(
+        &mut self,
+        state_root: B256,
+        withdrawal_storage_root: B256,
+        latest_block_hash: B256,
+    ) -> B256{
+
+    }
+
 
 }
 
