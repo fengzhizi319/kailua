@@ -2063,7 +2063,7 @@ pub(crate) mod test_salt_vec_oracle {
     }
     #[tokio::test]
     async fn test_prepare_salt_vec_oracle_with_output_roots() {
-        let oracle = prepare_salt_vec_oracle(8, 2);
+        let mut oracle = prepare_salt_vec_oracle(8, 2);
 
         // 验证可以通过 output_root 检索到对应的 encoded 数据
         let state_root_8 = b256!("0xd0ca14bbe5b2ccb6aec5d091966881ac40086b647222c2d660e90b2076dde100");
@@ -2074,7 +2074,7 @@ pub(crate) mod test_salt_vec_oracle {
         );
 
 
-        let computed_root_8 = oracle.compute_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
+        let computed_root_8 = oracle.insert_output_root(state_root_8, withdrawal_storage_root, block_hash_8);
         let output_root_key_8 = PreimageKey::new(*computed_root_8, PreimageKeyType::Keccak256);
         assert_eq!(computed_root_8,expected_root_8);
         println!("computed_root_8: {:?}", computed_root_8);
