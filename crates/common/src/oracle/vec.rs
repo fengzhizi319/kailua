@@ -30,7 +30,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use alloy_consensus::Header;
-use alloy_primitives::B256;
+use alloy_primitives::{hex, B256};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_trie::EMPTY_ROOT_HASH;
 use kona_proof::boot::{L1_HEAD_KEY, L2_OUTPUT_ROOT_KEY, L2_CLAIM_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CHAIN_ID_KEY, L2_ROLLUP_CONFIG_KEY};
@@ -548,13 +548,10 @@ pub fn read_shard() -> PreimageVecEntry {
 }
 
 
-pub fn load_json_file<T: DeserializeOwned>(data_dir: &PathBuf, file_name: &str) -> JsonResult<T> {
-    use serde::de::DeserializeOwned;
-    use std::path::PathBuf;
+pub fn load_json_file<T: DeserializeOwned>(data_dir: &PathBuf, file_name: &str) -> serde_json::Result<T> {
     use std::fs;
-    use serde_json::Result as JsonResult;
     let path = data_dir.join(file_name);
-    let content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path).map_err(serde_json::Error::io)?;
     serde_json::from_str(&content)
 }
 #[cfg(test)]
@@ -1230,13 +1227,67 @@ impl SaltVecOracle {
 
         output_root
     }
-    pub fn load_file_insert_transaction(
+    /// 从测试数据文件中加载区块数据，提取交易并将交易数据存储到oracle中
+    ///
+    /// # Arguments
+    /// * `block_number` - 要加载的区块号
+    /// * `block_hash` - 区块哈希，用于构造文件名
+    ///
+    /// # Returns
+    /// * `anyhow::Result<B256>` - 返回交易根哈希，如果成功的话
+    pub async fn load_file_insert_transaction(
         &mut self,
-        state_root: B256,
-        withdrawal_storage_root: B256,
-        latest_block_hash: B256,
-    ) -> B256{
+        block_number: u64,
+        block_hash: B256,
+    ) -> anyhow::Result<B256> {
+        // use crate::oracle::{store_ordered_trie, KeyValueStore};
+        use std::sync::RwLock;
+        use serde_json::Value;
 
+        // 构造测试数据目录路径
+        let test_data_dir = PathBuf::from("crates/common/src/oracle/test_data/stateless/witness");
+
+        // 构造文件名：{block_number}.{block_hash}.block.json
+        let file_name = format!("{}.{:#x}.block.json", block_number, block_hash);
+
+        // 读取并解析JSON文件
+        let block_data: Value = load_json_file(&test_data_dir, &file_name)?;
+
+        // 提取交易数组
+        let transactions = block_data
+            .get("transactions")
+            .ok_or_else(|| anyhow!("Missing transactions field in block data"))?
+            .as_array()
+            .ok_or_else(|| anyhow!("Transactions field is not an array"))?;
+
+        // 将交易序列化为字节数组
+        let encoded_transactions: Vec<Vec<u8>> = transactions
+            .iter()
+            .map(|tx| serde_json::to_vec(tx))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // // 使用RwLock包装preimages以符合store_ordered_trie的接口要求
+        // let kv_store = RwLock::new(KVStoreAdapter {
+        //     preimages: &self.preimages,
+        // });
+
+        // 将交易数据存储到有序trie中
+        //store_ordered_trie(&kv_store, &encoded_transactions).await?;
+
+        // 计算并返回交易根哈希
+        let transactions_root = block_data
+            .get("transactionsRoot")
+            .ok_or_else(|| anyhow!("Missing transactionsRoot field in block data"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("transactionsRoot is not a string"))?;
+
+        // 解析交易根哈希
+        let transactions_root_bytes = hex::decode(&transactions_root[2..])
+            .map_err(|e| anyhow!("Failed to decode transactionsRoot hex: {}", e))?;
+        let transactions_root_b256 = B256::try_from(transactions_root_bytes.as_slice())
+            .map_err(|_| anyhow!("Invalid transactionsRoot length"))?;
+
+        Ok(transactions_root_b256)
     }
 
 
@@ -2208,6 +2259,29 @@ pub(crate) mod test_salt_vec_oracle {
         assert_eq!(loaded_header1.number, 100);
         assert_eq!(loaded_header2.number, 101);
         assert_ne!(loaded_header1.timestamp, loaded_header2.timestamp);
+    }
+    #[tokio::test]
+    async fn test_load_file_insert_transaction() {
+        let mut oracle = SaltVecOracle::new();
+
+        // 测试加载区块 9 的交易数据
+        let block_number = 9;
+        let block_hash = b256!("0xf6e417d4f8dc0852f613d9292afd5f62323eb4779ef43d57f02840c322c3ff61");
+
+        // 调用 load_file_insert_transaction 方法
+        let result = oracle.load_file_insert_transaction(block_number, block_hash).await;
+        assert!(result.is_ok(), "Failed to load transactions: {:?}", result);
+
+        let transactions_root = result.unwrap();
+        let expected_transactions_root = b256!("0x4b5afecbbfd21b10e5c41f603092aee09ab69b51548dc3be0bec6ca51ca27245");
+        assert_eq!(transactions_root, expected_transactions_root);
+
+        // 验证预映像数量增加了（应该包含交易数据的 trie 节点）
+        assert!(oracle.preimage_count() > 0, "Oracle should contain transaction trie data");
+
+        println!("Successfully loaded {} transactions from block {}", 1, block_number);
+        println!("Transactions root: {:?}", transactions_root);
+        println!("Total preimages stored: {}", oracle.preimage_count());
     }
 }
 

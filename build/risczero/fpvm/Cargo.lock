@@ -2544,6 +2544,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "c-kzg",
+ "hex",
  "kona-derive",
  "kona-driver",
  "kona-executor",
